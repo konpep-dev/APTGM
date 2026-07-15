@@ -1,7 +1,3 @@
-"""
-Training script for APTGM and baselines.
-"""
-
 import os
 import json
 import yaml
@@ -11,6 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
+from torch.cuda.amp import autocast, GradScaler
 from tqdm import tqdm
 import numpy as np
 
@@ -47,6 +44,8 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     """Train for one epoch (really just a batch loop)."""
     model.train()
     
+    scaler = GradScaler()
+    
     losses = []
     accuracies = []
     gate_means = []
@@ -68,36 +67,39 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         input_ids = input_ids.to(device)
         target_ids = target_ids.to(device)
         
-        # Forward
-        logits, aux_info = model(input_ids)
-        
-        # Compute language modeling loss
-        loss_lm = nn.functional.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            target_ids.reshape(-1),
-            ignore_index=-100,
-        )
-        
-        # Gate regularization (if gate values exist)
-        loss_gate = 0.0
-        if aux_info['gate_values']:
-            all_gates = torch.cat(aux_info['gate_values'], dim=0)
-            mean_gate = all_gates.mean()
+        # Forward with AMP
+        with autocast():
+            logits, aux_info = model(input_ids)
             
-            g_star = config['training']['g_star']
-            lambda_gate = config['training']['lambda_gate']
-            loss_gate = lambda_gate * (mean_gate - g_star) ** 2
+            # Compute language modeling loss
+            loss_lm = nn.functional.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                target_ids.reshape(-1),
+                ignore_index=-100,
+            )
             
-            gate_means.append(mean_gate.item())
+            # Gate regularization (if gate values exist)
+            loss_gate = 0.0
+            if aux_info['gate_values']:
+                all_gates = torch.cat(aux_info['gate_values'], dim=0)
+                mean_gate = all_gates.mean()
+                
+                g_star = config['training']['g_star']
+                lambda_gate = config['training']['lambda_gate']
+                loss_gate = lambda_gate * (mean_gate - g_star) ** 2
+                
+                gate_means.append(mean_gate.item())
+            
+            # Total loss
+            loss = loss_lm + loss_gate
         
-        # Total loss
-        loss = loss_lm + loss_gate
-        
-        # Backward
+        # Backward with AMP
         optimizer.zero_grad()
-        loss.backward()
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
         scheduler.step()
         
         # Metrics

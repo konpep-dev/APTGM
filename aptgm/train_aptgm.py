@@ -6,6 +6,7 @@ Analyze gate behavior by token type.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 import yaml
 import json
 import argparse
@@ -40,13 +41,15 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         else:
             other_params.append(param)
 
-    optimizer = torch.optim.AdamW([
+optimizer = torch.optim.AdamW([
         {'params': other_params, 'lr': config["training"]["learning_rate"]},
         {'params': gate_params, 'lr': config["training"]["learning_rate"] / 10},
     ], weight_decay=config["training"]["weight_decay"])
     
+    scaler = GradScaler()
+    
     lambda_gate = config["training"]["lambda_gate"]
-    g_star_filler = config["training"].get("g_star_filler", 0.05)  # filler gate target
+    g_star_filler = config["training"].get("g_star_filler", 0.05)
     
     pbar = tqdm(range(max_steps), desc="Training APTGM")
     for step in pbar:
@@ -61,38 +64,38 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         input_ids = input_ids.to(device)
         labels = labels.to(device)
         
-        # Forward
-        logits, aux_info = model(input_ids)
-        
-        # Compute LM loss only on query positions
-        mask = (labels != -100)
-        loss_lm = F.cross_entropy(
-            logits[mask].view(-1, logits.size(-1)),
-            labels[mask].view(-1),
-        )
+        # Forward with AMP
+        with autocast():
+            logits, aux_info = model(input_ids)
+            
+            # Compute LM loss only on query positions
+            mask = (labels != -100)
+            loss_lm = F.cross_entropy(
+                logits[mask].view(-1, logits.size(-1)),
+                labels[mask].view(-1),
+            )
 
-        # Identify token-type masks (shared between regularization and analysis)
-        kv_positions = 2 * config["data"]["num_kv_pairs"]
-        kv_mask = torch.zeros_like(labels, dtype=torch.bool)
-        kv_mask[:, :kv_positions] = True
-        filler_mask = ~mask & ~kv_mask
+            # Identify token-type masks (shared between regularization and analysis)
+            kv_positions = 2 * config["data"]["num_kv_pairs"]
+            kv_mask = torch.zeros_like(labels, dtype=torch.bool)
+            kv_mask[:, :kv_positions] = True
+            filler_mask = ~mask & ~kv_mask
 
-        # Compute gate regularization loss (masked: only on filler tokens)
-        # aux_info["gate_values"] is a list (one per layer) of [batch, seq_len]
-        if len(aux_info["gate_values"]) > 0:
-            gate_all_layers = torch.stack(aux_info["gate_values"], dim=0)  # [n_layers, batch, seq_len]
-            gate_mean_across_layers = gate_all_layers.mean(dim=0)  # [batch, seq_len]
+            # Compute gate regularization loss (masked: only on filler tokens)
+            if len(aux_info["gate_values"]) > 0:
+                gate_all_layers = torch.stack(aux_info["gate_values"], dim=0)  # [n_layers, batch, seq_len]
+                gate_mean_across_layers = gate_all_layers.mean(dim=0)  # [batch, seq_len]
 
-            # Regularize ONLY filler tokens toward g_star_filler
-            g_filler = gate_mean_across_layers[filler_mask].mean() if filler_mask.any() else gate_mean_across_layers.mean()
-            loss_gate = lambda_gate * (g_filler - g_star_filler) ** 2
+                # Regularize ONLY filler tokens toward g_star_filler
+                g_filler = gate_mean_across_layers[filler_mask].mean() if filler_mask.any() else gate_mean_across_layers.mean()
+                loss_gate = lambda_gate * (g_filler - g_star_filler) ** 2
 
-            gate_mean = gate_mean_across_layers.mean()
-            loss = loss_lm + loss_gate
-        else:
-            gate_mean = torch.tensor(0.0)
-            loss = loss_lm
-        
+                gate_mean = gate_mean_across_layers.mean()
+                loss = loss_lm + loss_gate
+            else:
+                gate_mean = torch.tensor(0.0)
+                loss = loss_lm
+
         # Compute accuracy
         preds = logits.argmax(dim=-1)
         correct = (preds[mask] == labels[mask]).float().sum()
@@ -112,10 +115,13 @@ def train_steps(model, config, device, max_steps, log_interval=10):
             gate_at_filler = 0.0
             gate_at_kv = 0.0
         
-        # Backward
+        # Backward with AMP
         optimizer.zero_grad()
-        loss.backward()
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(optimizer)
+        scaler.update()
         optimizer.step()
         
         # Log

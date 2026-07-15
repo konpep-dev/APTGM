@@ -6,6 +6,7 @@ This establishes the upper bound performance on the task.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
 import yaml
 import json
 import argparse
@@ -40,6 +41,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"]["weight_decay"],
     )
+    scaler = GradScaler()
     
     pbar = tqdm(range(max_steps), desc="Training")
     for step in pbar:
@@ -54,15 +56,16 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         input_ids = input_ids.to(device)
         labels = labels.to(device)
         
-        # Forward
-        logits, aux_info = model(input_ids)
-        
-        # Compute loss only on query positions
-        mask = (labels != -100)
-        loss = F.cross_entropy(
-            logits[mask].view(-1, logits.size(-1)),
-            labels[mask].view(-1),
-        )
+        # Forward with AMP
+        with autocast():
+            logits, aux_info = model(input_ids)
+            
+            # Compute loss only on query positions
+            mask = (labels != -100)
+            loss = F.cross_entropy(
+                logits[mask].view(-1, logits.size(-1)),
+                labels[mask].view(-1),
+            )
         
         # Compute accuracy
         preds = logits.argmax(dim=-1)
@@ -70,11 +73,13 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         total = mask.sum()
         accuracy = correct / total if total > 0 else 0.0
         
-        # Backward
+        # Backward with AMP
         optimizer.zero_grad()
-        loss.backward()
+        scaler.scale(loss).backward()
+        scaler.unscale_(optimizer)
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
+        scaler.step(optimizer)
+        scaler.update()
         
         # Log
         if step % log_interval == 0:

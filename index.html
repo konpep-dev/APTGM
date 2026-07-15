@@ -1206,7 +1206,13 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
       <li><strong>Separate LR for gate:</strong> Gate params get 10× lower LR (3e-5 vs 3e-4). The gate evolves slowly; task loss guides routing before regularizer can collapse it.</      <li><strong>Gate bias init = 2.2:</strong> σ(2.2) ≈ 0.90 — gate starts near attention, regularizer only nudges filler down.</li>
     </ol>
     <p>No architecture changes, no hard constraints — just optimizer hygiene.</p>
-  </section>
+
+    <h3>9.7 — Training infrastructure for 1M params</h3>
+    <ul class="clean">
+      <li><strong>Batch size:</strong> 32 (up from 16) — T4 16GB fits 1M params at seq_len=128.</li>
+      <li><strong>Mixed precision (AMP):</strong> <code>torch.cuda.amp.autocast()</code> + <code>GradScaler</code> — 2× throughput on Tensor Cores.</li>
+      <li><strong>Fewer steps:</strong> 5,000 (vs 7,000) — 1M params converge faster; stop early if accuracy plateaus.</li>
+    </ul>
 
   <section>
     <h2><span class="num">10</span> Conclusions & Next Steps</h2>
@@ -1221,6 +1227,15 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
       <tr><td>9</td><td>APTGM seq128 (fixed: λ=0.05, g*_filler=0.05, bias=2.2, gate_lr=3e-5)</td><td>~500k</td><td>~30%+</td><td>~25%+</td><td>~2.0</td><td>~60 min</td></tr>
       <tr><td>10</td><td>APTGM seq128 @ 1M (d_model=128)</td><td>~1M</td><td>~45%+</td><td>~35%+</td><td>~1.5</td><td>~120 min</td></tr>
     </table>
+
+    <h3>10.1.1 — 1M parameter models (d_model=128, seq_len=128, 5k steps, batch=32, AMP)</h3>
+    <table>
+      <tr><th>Model</th><th>Params</th><th>Config</th><th>Expected Best Acc</th><th>Expected Final Acc</th><th>Status</th></tr>
+      <tr><td>SSM / Mamba</td><td>~1.0M</td><td>d_model=128, d_ff=896, batch=32, steps=5k, AMP</td><td>~20%+</td><td>~15%+</td><td>Pending</td></tr>
+      <tr><td>Attention / Transformer</td><td>~1.1M</td><td>d_model=128, n_heads=4, d_ff=896, batch=32, steps=5k, AMP</td><td>~50%+</td><td>~40%+</td><td>Pending</td></tr>
+      <tr><td class="hl">APTGM</td><td class="hl">~1.1M</td><td class="hl">λ=0.05, g*_filler=0.05, bias=2.2, gate_lr=3e-5, batch=32, AMP</td><td class="hl">~55%+</td><td class="hl">~45%+</td><td class="hl">Pending</td></tr>
+    </table>
+    <p><em>All 1M models use: d_model=128, d_ff=896, n_layers=4, seq_len=128, batch=32, max_steps=5000, AMP, λ=0.05, g*_filler=0.05. APTGM adds: gate bias=2.2, gate LR=3e-5.</em></p>
 
     <h3>10.1.1 — Visual summary</h3>
     <div class="diagram-wrap">
