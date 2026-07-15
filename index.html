@@ -1166,9 +1166,46 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
       <tr><td>g_star_filler</td><td>0.05</td><td>Filler target</td></tr>
     </table>
 
-    <h3>9.4 — Capacity bottleneck at 500K params (d_model=80)</h3>
+<h3>9.4 — Capacity bottleneck at 500K params (d_model=80)</h3>
     <p>At 500K parameters (d_model=80), the fixed APTGM gate operates correctly: the query gate remains steadily high (<strong>0.761</strong>), filler is suppressed to <strong>0.05</strong>. However, final accuracy is limited by the model's capacity bottleneck — the 80-dimensional residual stream cannot simultaneously encode all 128 sequence positions and their associative memories.</p>
     <p>To prove this is purely a capacity issue, we scale all architectures to <strong>1M parameters</strong> (d_model=128).</p>
+
+    <h3>9.5 — 1M parameter scale configs (d_model=128)</h3>
+    <p>All three architectures scaled to ~1M parameters for the capacity ablation:</p>
+
+    <h4>APTGM (~1.1M params)</h4>
+    <pre><code>model:
+  type: "aptgm"
+  d_model: 128
+  n_layers: 4
+  ssm_state_dim: 32
+  n_heads: 4
+  n_kv_heads: 4
+  d_ff: 896          # ~1.1M params</code></pre>
+
+    <h4>Pure SSM / Mamba (~1.0M params)</h4>
+    <pre><code>model:
+  type: "ssm"
+  d_model: 128
+  n_layers: 4
+  ssm_state_dim: 32
+  d_ff: 896          # ~1.0M params (no attention params)</code></pre>
+
+    <h4>Pure Attention / Transformer (~1.1M params)</h4>
+    <pre><code>model:
+  type: "attention"
+  d_model: 128
+  n_layers: 4
+  n_heads: 4
+  n_kv_heads: 4
+  d_ff: 896          # ~1.1M params</code></pre>
+
+    <h3>9.6 — Optimizer tweaks</h3>
+    <p>Two small optimizer changes prevent gate collapse without architecture changes:</p>
+    <ol>
+      <li><strong>Separate LR for gate:</strong> Gate params get 10× lower LR (3e-5 vs 3e-4). The gate evolves slowly; task loss guides routing before regularizer can collapse it.</      <li><strong>Gate bias init = 2.2:</strong> σ(2.2) ≈ 0.90 — gate starts near attention, regularizer only nudges filler down.</li>
+    </ol>
+    <p>No architecture changes, no hard constraints — just optimizer hygiene.</p>
   </section>
 
   <section>
