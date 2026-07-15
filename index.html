@@ -15,17 +15,18 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js"></script>
 <style>
   :root{
-    --bg: #f7fafc;
-    --paper: #fbfdfe;
-    --ink: #16232f;
-    --ink-soft: #52697a;
-    --ink-faint: #8299a8;
-    --accent: #2c6e8e;
-    --accent-deep: #1c4a61;
-    --accent-soft: #dbe9f0;
-    --accent-line: #c3dbe6;
-    --rule: #dde6ec;
-    --math-bg: #eef5f8;
+    --bg: #f3f6fa;
+    --paper: #fafbfd;
+    --ink: #1a2634;
+    --ink-soft: #4a6178;
+    --ink-faint: #7a94a8;
+    --accent: #1a6b8a;
+    --accent-deep: #0d3e57;
+    --accent-soft: #cde4f0;
+    --accent-line: #a8cce0;
+    --accent-glow: #e2f0f8;
+    --rule: #d0dce6;
+    --math-bg: #eaf2f8;
     --display: 'Fraunces', Georgia, serif;
     --body-serif: 'Newsreader', Georgia, serif;
     --sans: 'Inter', -apple-system, sans-serif;
@@ -37,6 +38,7 @@
   body{
     margin:0;
     background: var(--bg);
+    background-image: radial-gradient(ellipse at 50% 0%, rgba(26, 107, 138, 0.04) 0%, transparent 60%);
     color: var(--ink);
     font-family: var(--body-serif);
     -webkit-font-smoothing: antialiased;
@@ -72,12 +74,16 @@
   h1.title{
     font-family: var(--display);
     font-optical-sizing: auto;
-    font-weight: 600;
+    font-weight: 700;
     font-size: 52px;
-    line-height: 1.08;
-    letter-spacing: -0.015em;
+    line-height: 1.06;
+    letter-spacing: -0.018em;
     margin: 0 0 16px;
     color: var(--ink);
+    background: linear-gradient(135deg, var(--ink) 40%, var(--accent-deep) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
   h1.title em{
     font-style: italic;
@@ -102,20 +108,23 @@
     font-size: 12.5px;
     color: var(--ink-faint);
     font-family: var(--mono);
-    padding-bottom: 32px;
-    border-bottom: 1px solid var(--rule);
+    padding: 16px 20px;
+    border: 1px solid var(--accent-soft);
+    background: var(--accent-glow);
+    border-radius: 4px;
     margin-bottom: 44px;
   }
   .meta-row span b{ color: var(--ink-soft); font-weight: 600; }
 
   /* ---------- Abstract ---------- */
   .abstract{
-    background: var(--paper);
-    border: 1px solid var(--rule);
-    border-left: 3px solid var(--accent);
-    border-radius: 3px;
+    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--paper) 80%);
+    border: 1px solid var(--accent-line);
+    border-left: 4px solid var(--accent);
+    border-radius: 4px;
     padding: 28px 32px;
     margin-bottom: 58px;
+    box-shadow: 0 1px 4px rgba(26, 107, 138, 0.06);
   }
   .abstract .label{
     font-family: var(--sans);
@@ -145,12 +154,17 @@
     display:flex;
     align-items:baseline;
     gap: 13px;
+    border-bottom: 2px solid var(--accent-soft);
+    padding-bottom: 10px;
   }
   h2 .num{
     font-family: var(--mono);
     font-size: 14px;
-    color: var(--accent-line);
+    color: var(--accent);
     font-weight: 600;
+    background: var(--accent-soft);
+    padding: 2px 8px;
+    border-radius: 3px;
   }
   h3{
     font-family: var(--sans);
@@ -167,15 +181,18 @@
   /* ---------- Comparison table ---------- */
   table{
     width: 100%;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     margin: 22px 0 8px;
     font-size: 14px;
     font-family: var(--sans);
     background: var(--paper);
-    border: 1px solid var(--rule);
+    border: 1px solid var(--accent-line);
+    border-radius: 4px;
+    overflow: hidden;
   }
   th, td{
-    padding: 12px 15px;
+    padding: 11px 15px;
     text-align: left;
     border-bottom: 1px solid var(--rule);
   }
@@ -184,17 +201,20 @@
     font-size: 11px;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    color: var(--ink-faint);
-    background: var(--math-bg);
+    color: var(--paper);
+    background: var(--accent-deep);
     font-weight: 600;
+    padding: 10px 15px;
   }
   td.hl{ color: var(--accent-deep); font-weight: 600; }
   tr:last-child td{ border-bottom: none; }
-  tr:last-child{ background: var(--accent-soft); }
+  tr:last-child{ background: var(--accent-glow); }
+  tr:hover td{ background: rgba(26, 107, 138, 0.03); }
+  tr:last-child:hover td{ background: var(--accent-glow); }
 
   /* ---------- Math blocks ---------- */
   .eq-block{
-    background: var(--math-bg);
+    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--math-bg) 100%);
     border: 1px solid var(--accent-line);
     border-radius: 4px;
     padding: 20px 26px;
@@ -214,20 +234,22 @@
 
   code.inline{
     font-family: var(--mono);
-    background: var(--accent-soft);
+    background: var(--accent-glow);
     color: var(--accent-deep);
     padding: 1px 6px;
     border-radius: 3px;
     font-size: 0.88em;
+    border: 1px solid var(--accent-soft);
   }
 
   /* ---------- Diagram ---------- */
   .diagram-wrap{
     background: var(--paper);
-    border: 1px solid var(--rule);
-    border-radius: 6px;
+    border: 1px solid var(--accent-line);
+    border-radius: 8px;
     padding: 32px 20px 24px;
     margin: 28px 0 10px;
+    box-shadow: 0 2px 8px rgba(26, 107, 138, 0.05);
   }
   .diagram-caption{
     font-family: var(--sans);
@@ -252,25 +274,27 @@
     position: absolute;
     left: 0;
     color: var(--accent);
-    font-weight: 600;
+    font-weight: 700;
   }
   ul.clean li b{ color: var(--accent-deep); }
+  ul.clean li:last-child{ border-bottom-color: var(--accent-soft); }
 
   .risk{
-    border-left: 3px solid #c98a3a;
-    background: #fbf3e8;
-    padding: 13px 20px;
-    border-radius: 3px;
+    border-left: 4px solid var(--accent);
+    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--paper) 100%);
+    padding: 16px 22px;
+    border-radius: 4px;
     font-family: var(--sans);
     font-size: 14px;
-    color: #6b4a1e;
+    color: var(--ink-soft);
     margin: 12px 0;
+    box-shadow: 0 1px 4px rgba(26, 107, 138, 0.05);
   }
 
   footer{
     margin-top: 84px;
-    padding-top: 26px;
-    border-top: 1px solid var(--rule);
+    padding: 24px 0 0;
+    border-top: 2px solid var(--accent-soft);
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--ink-faint);
@@ -279,9 +303,33 @@
   }
 
   @media (max-width: 640px){
-    .page{ padding: 48px 20px 84px; }
-    h1.title{ font-size: 36px; }
-    .meta-row{ gap: 14px; }
+    .page{ padding: 32px 16px 64px; }
+    h1.title{ font-size: 32px; line-height: 1.12; }
+    .subtitle{ font-size: 17px; }
+    .meta-row{ gap: 10px; font-size: 11px; flex-direction: column; }
+    .abstract{ padding: 20px; }
+    h2{ font-size: 22px; gap: 10px; flex-wrap: wrap; }
+    h3{ font-size: 14px; }
+    p{ font-size: 15px; }
+    table{ font-size: 13px; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    td, th{ padding: 6px 8px; white-space: nowrap; }
+    .diagram-wrap{ padding: 12px; }
+    .diagram-caption{ font-size: 12px; padding: 8px 0 0; }
+    .eq-block{ padding: 14px; overflow-x: auto; }
+    .eq-block mjx-container{ display: inline-block; min-width: auto; }
+    img{ max-width: 100%; height: auto; }
+    .kicker{ font-size: 10px; }
+    .risk{ padding: 14px; font-size: 14px; }
+    footer{ flex-direction: column; gap: 6px; font-size: 10px; }
+    section{ margin-bottom: 40px; }
+    ul.clean li{ font-size: 13.5px; padding: 9px 0 9px 20px; }
+  }
+
+  @media (max-width: 480px){
+    h1.title{ font-size: 26px; }
+    .page{ padding: 24px 12px 48px; }
+    table{ font-size: 11px; }
+    td, th{ padding: 4px 6px; }
   }
 </style>
 </head>
