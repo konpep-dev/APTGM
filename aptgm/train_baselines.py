@@ -12,6 +12,7 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 import sys
+import argparse
 
 from models.model import LMBackbone
 from data.mqar import generate_mqar_batch
@@ -201,22 +202,27 @@ APTGM uniquely combines all three: per-token, content-dependent, AND continuous.
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python train_baselines.py <model_type>")
-        print("  model_type: falcon_h1_01, falcon_h1_025, falcon_h1_05, hard_routing, all")
-        sys.exit(1)
-    
-    model_type = sys.argv[1]
+    parser = argparse.ArgumentParser()
+    parser.add_argument('model_type', type=str, nargs='?', default='all', help='Model type: falcon_h1_01, falcon_h1_025, falcon_h1_05, hard_routing, all')
+    parser.add_argument('--config', type=str, default='configs/paper_plots.yaml', help='Config file (yaml)')
+    parser.add_argument('--output_dir', type=str, default='outputs/paper', help='Output directory')
+    parser.add_argument('--seed', type=int, default=42)
+    args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    model_type = args.model_type
     
     # Load config
-    with open("configs/paper_plots.yaml") as f:
+    with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
     # Create output directory
-    output_dir = Path("outputs/paper")
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Define models to train

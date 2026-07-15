@@ -8,6 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import yaml
 import json
+import argparse
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
@@ -228,15 +229,24 @@ def save_report(config, history, param_count, save_path):
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='configs/paper_plots.yaml', help='Config file (yaml)')
+    parser.add_argument('--output_dir', type=str, default='outputs/paper', help='Output directory')
+    parser.add_argument('--seed', type=int, default=42)
+    args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
     # Load config
-    with open("configs/paper_plots.yaml") as f:
+    with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
     # Create output directory
-    output_dir = Path("outputs/paper")
+    output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create attention-only model
