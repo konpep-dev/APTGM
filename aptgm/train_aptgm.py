@@ -31,11 +31,19 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         "step": [],
     }
     
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config["training"]["learning_rate"],
-        weight_decay=config["training"]["weight_decay"],
-    )
+    # Separate gate params (10x lower LR) from rest
+    gate_params = []
+    other_params = []
+    for name, param in model.named_parameters():
+        if 'gate' in name.lower():
+            gate_params.append(param)
+        else:
+            other_params.append(param)
+
+    optimizer = torch.optim.AdamW([
+        {'params': other_params, 'lr': config["training"]["learning_rate"]},
+        {'params': gate_params, 'lr': config["training"]["learning_rate"] / 10},
+    ], weight_decay=config["training"]["weight_decay"])
     
     lambda_gate = config["training"]["lambda_gate"]
     g_star_filler = config["training"].get("g_star_filler", 0.05)  # filler gate target
