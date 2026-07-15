@@ -323,10 +323,10 @@ While this work focuses on autoregressive language modeling, APTGM is inherently
 If you use APTGM in your research, please cite:
 
 ```bibtex
-@misc{aptgm2025,
+@misc{aptgm2026,
   title={APTGM: Adaptive Per-Token Gated Mixing},
-  author={Konstantinos Peponis},
-  year={2025},
+  author={Peplis, Konstantinos},
+  year={2026},
   url={https://github.com/konpep-dev/APTGM}
 }
 ```
