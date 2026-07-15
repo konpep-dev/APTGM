@@ -1,0 +1,1 @@
+"""APTGM model components"""

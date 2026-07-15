@@ -1,0 +1,28 @@
+# Phase 2 test config: seq_len=64, short training
+model:
+  d_model: 128
+  n_layers: 4
+  ssm_state_dim: 16
+  n_heads: 4
+  n_kv_heads: 2
+  d_ff: 512
+  dropout: 0.0
+
+training:
+  batch_size: 16
+  seq_len: 64
+  learning_rate: 3.0e-4
+  weight_decay: 0.1
+  max_steps: 3000
+  warmup_steps: 300
+  log_interval: 100
+  eval_interval: 500
+  
+  # Gate loss (not used for SSM-only)
+  lambda_gate: 1.0
+  g_star: 0.15
+
+data:
+  vocab_size: 256
+  num_kv_pairs: 8
+  num_queries: 4

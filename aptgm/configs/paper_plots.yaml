@@ -1,0 +1,28 @@
+# Config for generating paper plots - fast version (~25 min)
+model:
+  d_model: 96  # Smaller
+  n_layers: 3  # Fewer layers
+  ssm_state_dim: 12
+  n_heads: 6
+  n_kv_heads: 2
+  d_ff: 384
+  dropout: 0.0
+
+training:
+  batch_size: 16
+  seq_len: 128
+  learning_rate: 5.0e-4
+  weight_decay: 0.1
+  max_steps: 1000  # Fewer steps, ~25 min at 1.5s/it
+  warmup_steps: 100
+  log_interval: 10  # Log frequently for smooth curves
+  eval_interval: 500
+  
+  # Gate loss
+  lambda_gate: 1.0
+  g_star: 0.15
+
+data:
+  vocab_size: 256
+  num_kv_pairs: 10
+  num_queries: 5
