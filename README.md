@@ -1,175 +1,103 @@
-# APTGM — Adaptive Per-Token Gated Mixing
+# APTGM: Adaptive Per-Token Gated Mixing
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/pytorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**📄 [Read the Full Paper (HTML)](https://konpep-dev.github.io/APTGM/)** | [GitHub Repository](https://github.com/konpep-dev/APTGM) 
+**Paper (HTML):** [konpep-dev.github.io/APTGM](https://konpep-dev.github.io/APTGM/) &nbsp;&middot;&nbsp; **Repository:** [github.com/konpep-dev/APTGM](https://github.com/konpep-dev/APTGM)
 
 ---
 
-A **learned, continuous, per-token** hybrid architecture that dynamically routes between SSM (State-Space Models) and Attention mechanisms. APTGM introduces a scalar gate that observes only the current token and decides how much attention vs. SSM to use — **without explicit supervision**.
+APTGM is a hybrid sequence model that learns to dynamically route each token through a **gated combination of a State-Space Model (SSM) and Attention**. A scalar gate, conditioned only on the current token, produces a continuous blend of the two branches — without explicit supervision, without hard routing decisions, and with a single learnable parameter per layer.
 
-<div align="center">
-  <img src="images/summary_simple.png" alt="APTGM Overview" width="800"/>
-  <p><em>Training dynamics: APTGM learns content-dependent routing between SSM and Attention</em></p>
-</div>
+We validate the architecture on the **Multi-Query Associative Recall (MQAR)** task, measuring whether the gate learns to route query tokens to attention and filler tokens to the SSM.
 
 ---
 
-## 🎯 Key Innovation
+## Results
 
-Existing hybrid models (Falcon-H1, Hymba, Jamba, Zamba) use:
-- **Fixed blending** (same ratio for all tokens)
-- **Hard routing** (binary 0/1 decisions)
-- **Manual hyperparameters**
+All models trained on a T4 GPU for 7,000 steps at approximately 400k parameters.
 
-**APTGM is the first to combine:**
-- ✅ **Per-token decisions** (different routing for each token)
-- ✅ **Continuous blending** (soft gates, fully differentiable)
-- ✅ **Content-dependent** (learned from data, not hand-tuned)
+| Model | Params | Best Accuracy | Final Loss | Training Time |
+|-------|-------:|--------------:|-----------:|--------------:|
+| SSM-only (seq\_len=64) | 397,044 | 12.7% | 2.77 | ~25 min |
+| SSM-only (seq\_len=128) | 397,044 | 13.0% | 2.76 | ~50 min |
+| Attention-only | 474,976 | 18.75% | 2.73 | ~5 min |
+| **APTGM (ours)** | **500,408** | **20.31%** | **2.30** | ~53 min |
 
----
+### Key findings
 
-## 🔬 Core Result: The Gate Learns Routing
-
-The gate **learned meaningful routing** on the MQAR task:
-
-| Token Type | Gate Value (g_t) | Interpretation |
-|------------|------------------|----------------|
-| **Query tokens** (need precise retrieval) | **0.86** | Routes to **Attention** |
-| **Filler tokens** (just context) | **0.10** | Routes to **SSM** (cheap) |
-| **Routing gap** | **0.76** | **Gate learned the policy!** |
-
-This emerged **purely from task loss** — no token-type labels were provided. The gate discovered which tokens need attention vs. SSM entirely on its own.
-
-<div align="center">
-  <img src="images/aptgm_seq128_curves.png" alt="APTGM Gate Behavior" width="800"/>
-  <p><em>Bottom left plot: Gate values diverge by token type — the key validation of learned routing</em></p>
-</div>
+- APTGM achieves the **highest peak accuracy** (20.31%, step 3,400) and **lowest final loss** (2.30) among all models, despite training 3 components (SSM + Attention + Gate) versus 1 for baselines.
+- The gate learns **content-dependent routing**: query gate = 0.108, filler gate = 0.254, KV gate = 0.488.
+- A **reward hacking** effect was identified: the uniform regularizer `λ·(ḡ − 0.15)²` penalises query tokens disproportionately (4/128 = 3.1% of the sequence), biasing the gate in the opposite direction.
+- A **masked regularization** fix (penalty applied to filler tokens only) is implemented and ready for validation.
 
 ---
 
-## 📊 Experimental Results
+## The MQAR Task
 
-Trained on **MQAR (Multi-Query Associative Recall)** — a synthetic task requiring retrieval of key-value pairs across long contexts:
-
-| Model | Initial Loss | Final Loss | Loss Reduction | Peak Accuracy | Final Accuracy |
-|-------|--------------|------------|----------------|---------------|----------------|
-| SSM-only | 5.54 | 4.47 | 19.4% | 7.50% | 1.25% |
-| **Attention-only** | 5.55 | **3.64** | **34.4%** | **15.00%** | **6.25%** |
-| Falcon-H1 (α=0.1) | 5.60 | 4.45 | 20.5% | 5.00% | 1.25% |
-| Falcon-H1 (α=0.25) | 5.57 | 4.47 | 19.7% | 5.00% | 0.00% |
-| **APTGM (ours)** | 5.56 | 4.45 | 19.9% | 5.00% | 2.50% |
-
-### Key Findings:
-- ✅ **Gate learns routing:** 0.76 gap between query (0.86) and filler (0.10)
-- ✅ **Content-dependent:** No explicit supervision, purely from loss
-- ✅ **Differentiable:** Fully trainable end-to-end
-- ⚠️ **Lower accuracy expected:** APTGM trains 3 components (SSM + Attention + Gate) vs. baselines training 1, with only 1000 steps
-
-**The primary goal was to verify routing behavior, not maximize accuracy on a toy task.** The 0.76 routing gap is the definitive proof that the architecture works as designed.
-
----
-
-## 🏗️ Architecture
+MQAR tests whether models can retrieve key-value associations across long contexts:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Input Tokens                           │
-│                    [batch, seq_len]                         │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Embedding Layer                           │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-    ╔══════════════════▼═══════════════════════════════════╗
-    ║  for layer in 1..N_LAYERS:                          ║
-    ║                                                      ║
-    ║  ┌────────────────────────────────────────────┐    ║
-    ║  │          LayerNorm(x)                      │    ║
-    ║  └───┬──────────────────────────────┬─────────┘    ║
-    ║      │                              │               ║
-    ║      ▼                              ▼               ║
-    ║  ┌──────────┐                 ┌──────────┐         ║
-    ║  │   SSM    │                 │ Attention│         ║
-    ║  │ O(T·n)   │                 │ O(T²·d)  │         ║
-    ║  │  cheap   │                 │ expensive│         ║
-    ║  │          │                 │          │         ║
-    ║  │ Δ=soft+  │                 │ Q,K,V=Wx │         ║
-    ║  │ h=A̅·h+B̅·x│                 │ attn=    │         ║
-    ║  │ y=C·h+D·x│                 │ soft(QK) │         ║
-    ║  └────┬─────┘                 └─────┬────┘         ║
-    ║       │                             │               ║
-    ║       │      ┌─────────────┐        │               ║
-    ║       └─────►│  Gate g_t   │◄───────┘               ║
-    ║              │σ(wᵀ·LN(x)+b)│                        ║
-    ║              └──────┬──────┘                        ║
-    ║                     │                                ║
-    ║                     ▼                                ║
-    ║       ╔═════════════════════════════╗               ║
-    ║       ║ z = g·y_attn + (1-g)·y_ssm ║               ║
-    ║       ╚═════════════════════════════╝               ║
-    ║                     │                                ║
-    ║                     ▼                                ║
-    ║       ┌────────────────────────────┐                ║
-    ║       │      x = x + z             │                ║
-    ║       └────────────┬───────────────┘                ║
-    ║                    │                                 ║
-    ║                    ▼                                 ║
-    ║       ┌────────────────────────────┐                ║
-    ║       │  x = x + FFN(LN(x))        │                ║
-    ║       └────────────┬───────────────┘                ║
-    ║                    │                                 ║
-    ╚════════════════════╪═════════════════════════════════╝
-                         │ (loop back or continue)
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Final LayerNorm                           │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      LM Head                                │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Logits [batch, seq_len, vocab]           │
-└─────────────────────────────────────────────────────────────┘
+K₁ → V₁  K₂ → V₂  …  K₈ → V₈  [ filler tokens ]  Q₁  Q₂  Q₃  Q₄
 ```
 
-**Key Points:**
-- **Gate observes LayerNorm(x)** - ensures causality and content-dependent routing
-- **SSM branch:** O(T·n) - cheap, sequential recurrence with state decay
-- **Attention branch:** O(T²·d) - expensive, direct key-value lookup, no decay
-- **Gate g_t ∈ (0,1):** Learned scalar that blends the two branches per token
+The model sees eight random key-value pairs, followed by filler tokens (distractors), then four queries. For each query, the model must output the correct value. The vocabulary is 256 tokens — random guessing yields 0.39% accuracy.
 
-**Mathematical Formulation:**
+This task isolates the core challenge: the SSM must maintain state across filler tokens (where state decays), while attention has direct access to all past positions. An ideal hybrid should route queries to attention and filler to the SSM.
+
+---
+
+## Architecture
+
+```
+Input → Embed → [ LayerNorm → SSM + Attention → Gate → FFN ] × N → LM Head
+```
+
+**Gate.** Each layer learns a single weight vector `w_g` and bias `b_g`:
 
 ```math
-g_t = σ(w_g^T · \text{LN}(x_t) + b_g) \in (0,1)
+g_t = \sigma(w_g^\top \cdot \text{LayerNorm}(x_t) + b_g) \quad \in (0, 1)
 ```
+
+**Blend.** The gate produces a continuous mix of the two branch outputs:
 
 ```math
 z_t = g_t \cdot y_t^{\text{Attn}} + (1 - g_t) \cdot y_t^{\text{SSM}}
 ```
 
-**Loss with Budget Regularization:**
+**Regularization (original).** A penalty encourages sparse attention usage:
 
 ```math
-\mathcal{L} = \mathcal{L}_{\text{LM}} + \lambda \left( \frac{1}{T}\sum_{t=1}^{T} g_t - g^* \right)^2
+\mathcal{L} = \mathcal{L}_{\text{LM}} + \lambda \left( \frac{1}{T}\sum_{t=1}^T g_t - g^* \right)^2
 ```
 
-where λ=1.0 and g*=0.15 (target 15% attention usage).
+This uniform regularizer causes reward hacking — see [analysis below](#reward-hacking).
 
 ---
 
-## 🚀 Quick Start
+## Reward Hacking
 
-### Installation
+The regularizer `λ·(ḡ − 0.15)²` penalises all tokens equally toward a mean gate of 0.15. Because query tokens constitute only 4 out of 128 positions (3.1%), the model minimises the penalty by:
+
+- Routing **queries to the SSM** (g ≈ 0, negligible penalty — too few tokens)
+- Routing **filler to attention** (g ≈ 0.25, dominates the mean)
+
+The result is a **negative routing gap** (−0.146): filler receives more attention than queries, opposite to the desired behaviour.
+
+**Fix.** Masked regularisation applies the penalty only to filler tokens, leaving queries and KV tokens free to use attention:
+
+```math
+\mathcal{L}_{\text{gate}} = \lambda \cdot \mathbb{E}[g_{\text{filler}} - 0.05]^2
+```
+
+This fix is implemented in [`train_aptgm.py`](aptgm/train_aptgm.py) and ready for re-training.
+
+---
+
+## Quick Start
+
+### Install
 
 ```bash
 git clone https://github.com/konpep-dev/APTGM.git
@@ -177,150 +105,68 @@ cd APTGM
 pip install -r aptgm/requirements.txt
 ```
 
-### Training APTGM
+### Train models
 
 ```bash
-cd aptgm
-python train_aptgm.py --config configs/paper_plots.yaml
+# APTGM (fixed regularisation)
+python aptgm/train_aptgm.py --config aptgm/configs/ssm_seq128.yaml
+
+# SSM baseline
+python aptgm/train.py --config aptgm/configs/ssm_seq128.yaml --model_type ssm
+
+# Attention baseline
+python aptgm/train_attention.py --config aptgm/configs/ssm_seq128.yaml
 ```
 
-### Training Baselines
+### Generate comparison plots
 
-```bash
-# SSM-only baseline
-python train.py --config configs/paper_plots.yaml --model_type ssm
-
-# Attention-only baseline
-python train_attention.py --config configs/paper_plots.yaml
-
-# Falcon-H1 baselines
-python train_baselines.py --config configs/paper_plots.yaml
-```
-
-### Generating Plots
-
-```bash
-# Create summary comparison plots
-python create_summary_plot.py
-
-# Create Falcon-H1 comparison plots
-python create_falcon_plots.py
+```python
+# See aptgm/plot_all.py for the complete plotting pipeline
 ```
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 APTGM/
-├── README.md                         # This file
-├── index.html                        # Full paper (GitHub Pages)
-├── LICENSE                           # MIT License
-├── images/                           # All plots and figures
-│   ├── aptgm_seq128_curves.png
-│   ├── attention_seq128_curves.png
+├── README.md                       # This file
+├── index.html                      # Full paper with math and figures
+├── images/                         # Training curves and comparison plots
+│   ├── ssm_seq64_curves.png
 │   ├── ssm_seq128_curves.png
-│   ├── falcon_h1_comparison.png
+│   ├── attention_seq128_curves.png
+│   ├── aptgm_seq128_curves.png
 │   ├── summary_comparison.png
 │   └── summary_simple.png
-│
-└── aptgm/                            # Main package
-    ├── requirements.txt              # Dependencies
-    ├── train.py                      # Main training script
-    ├── train_aptgm.py                # APTGM training
-    ├── train_attention.py            # Attention baseline
-    ├── train_baselines.py            # Falcon-H1 baselines
-    ├── test_mqar.py                  # MQAR tests
-    ├── create_summary_plot.py        # Plot generation
-    │
-    ├── models/                       # Architecture modules
-    │   ├── model.py                  # Main APTGM model
-    │   ├── attention.py              # Attention module
-    │   ├── ssm.py                    # SSM module (Mamba-style)
-    │   ├── gate.py                   # Scalar gate
-    │   └── block.py                  # Transformer block
-    │
-    ├── data/                         # Datasets
-    │   └── mqar.py                   # MQAR implementation
-    │
-    ├── configs/                      # Training configs
-    │   ├── paper_plots.yaml          # Main config
-    │   └── *.yaml                    # Other configs
-    │
-    └── outputs/paper/                # Results
-        ├── *.json                    # Training histories
-        └── *.md                      # Reports
+└── aptgm/
+    ├── train.py                    # SSM training
+    ├── train_aptgm.py              # APTGM training (with masked regularisation)
+    ├── train_attention.py          # Attention training
+    ├── models/
+    │   ├── model.py                # LM backbone + APTGM block
+    │   ├── ssm.py                  # Mamba-style selective SSM
+    │   ├── attention.py            # Grouped-query attention
+    │   ├── gate.py                 # Scalar gate
+    │   └── block.py                # Residual block
+    ├── data/mqar.py                # MQAR dataset generator
+    └── configs/*.yaml              # Training configurations
 ```
 
 ---
 
-## 📖 Documentation
+## Beyond Language Modelling
 
-- **[Full Paper (HTML)](https://konpep-dev.github.io/APTGM/)** — Complete documentation with math, diagrams, and results
-- **[Phase 1 Report](https://github.com/konpep-dev/APTGM/blob/main/aptgm/PHASE1_REPORT.md)** — MQAR dataset validation
-- **[Phase 2 Report](https://github.com/konpep-dev/APTGM/blob/main/aptgm/PHASE2_REPORT.md)** — SSM baseline results
-- **[Phase 5 Report](https://github.com/konpep-dev/APTGM/blob/main/aptgm/PHASE5_REPORT.md)** — Falcon-H1 comparisons
-- **[Final Results](https://github.com/konpep-dev/APTGM/blob/main/aptgm/FINAL_RESULTS.md)** — Complete experimental summary
+Per-token adaptive gating is domain-agnostic. Any sequence task with non-uniform information density is a candidate:
 
----
-
-## � The MQAR Task
-
-**Multi-Query Associative Recall (MQAR)** tests whether models can retrieve exact key-value pairs from arbitrary positions in long sequences:
-
-```
-Sequence structure:
-[k1→v1, k2→v2, ..., kn→vn] [filler tokens] [q1, q2, ..., qm]
-```
-
-- Model must output `v_j` when it sees query `q_i = k_j`
-- Filler tokens are random distractors (not constant padding)
-- Loss computed only at query positions
-
-**Why this task?**
-- Tests long-range recall (SSMs struggle due to state decay)
-- Tests attention's key-value lookup (direct access, no decay)
-- Ideal for validating content-dependent routing
+- **Genomics** — promoters, coding regions vs. non-functional sequence
+- **Finance** — large trades vs. market noise
+- **Audio** — phoneme boundaries vs. steady-state regions
+- **Clinical time-series** — arrhythmia events vs. normal rhythm
 
 ---
 
-## 💡 Why APTGM's Accuracy is Lower (and Why It Doesn't Matter)
-
-APTGM achieves 5% accuracy vs. SSM's 7.5%, but this is **expected and not a failure**:
-
-1. **Optimization difficulty:** APTGM trains 3 components (SSM + Attention + Gate) simultaneously with only 1000 steps
-2. **Gate regularization:** The loss includes a penalty that actively constrains routing during training
-3. **Primary goal:** Verify routing behavior, not maximize accuracy on a toy task
-
-**The 0.76 routing gap is the definitive proof that the architecture works.** With more training steps (5k-10k), accuracy would improve while maintaining learned routing.
-
----
-
-## 🌍 Beyond Language Modeling
-
-While this work focuses on autoregressive language modeling, APTGM is inherently general-purpose. The per-token adaptive gating makes it suitable for any sequence modeling domain with variable information density:
-
-- **Genomics:** DNA/RNA sequences (promoters, coding regions vs. intergenic)
-- **Finance:** High-frequency trading (large trades vs. noise)
-- **Audio:** Speech and music (phoneme boundaries vs. steady-state)
-- **Time-series:** Sensor data, medical signals (EEG, ECG), climate models
-
----
-
-## 🔮 Future Work
-
-- **Scaling:** Test at 1B+ parameters with 100k+ training steps
-- **Hard gating:** Implement Gumbel straight-through for actual FLOP savings at inference
-- **Real benchmarks:** Evaluate on language modeling (MMLU, HellaSwag, etc.)
-- **Multi-layer analysis:** Examine routing policies across different layers
-- **Budget sweeps:** Vary g* from 0.05 (mostly SSM) to 0.50 (mostly attention)
-- **Cross-domain validation:** Test on genomic, financial, or audio data
-
----
-
-## 📝 Citation
-
-If you use APTGM in your research, please cite:
+## Citation
 
 ```bibtex
 @misc{aptgm2026,
@@ -333,50 +179,4 @@ If you use APTGM in your research, please cite:
 
 ---
 
-## 🤝 Comparison with Prior Hybrid Architectures
-
-| Model | Routing | Per-token? | Content-dependent? | Continuous? |
-|-------|---------|------------|-------------------|-------------|
-| Falcon-H1 | Fixed sum | ❌ No | ❌ No | ✅ Yes (static) |
-| Hymba | Per-head split | Per head | ❌ No | ❌ No |
-| FlowHN | Hard routing | ✅ Yes | ✅ Yes | ❌ No (binary) |
-| **APTGM** | **Learned gate** | **✅ Yes** | **✅ Yes (proven!)** | **✅ Yes** |
-
-**APTGM is the first to combine all three properties: per-token decisions, continuous blending, and learned content-dependent routing.**
-
----
-
-## � Visual Results
-
-<div align="center">
-  <img src="images/summary_comparison.png" alt="All Models Comparison" width="800"/>
-  <p><em>Comprehensive comparison: Loss, accuracy, gate behavior across all models</em></p>
-</div>
-
----
-
-## 🙏 Acknowledgments
-
-- Inspired by Mamba (SSM), Falcon-H1 (hybrid), and FlowHN (hard routing)
-- Built with PyTorch
-- MQAR task adapted from associative recall literature
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🔗 Links
-
-- **GitHub Repository:** [github.com/konpep-dev/APTGM](https://github.com/konpep-dev/APTGM)
-- **Full Paper (HTML):** [konpep-dev.github.io/APTGM](https://konpep-dev.github.io/APTGM/)
-- **Author:** [@konpep-dev](https://github.com/konpep-dev)
-
----
-
-<div align="center">
-  <strong>🎯 Proof-of-concept complete: The gate learns content-dependent routing!</strong>
-</div>
+**License:** MIT — see [LICENSE](LICENSE).
