@@ -65,7 +65,7 @@ print("="*70)
 
 # Try different combinations
 alternatives = [
-    {'vocab_size': 256, 'd_model': 80, 'n_layers': 4, 'd_ff': 320, 'n_heads': 4, 'ssm_state_dim': 32},
+    {'vocab_size': 256, 'd_model': 80, 'n_layers': 4, 'd_ff': 544, 'n_heads': 4, 'ssm_state_dim': 32},
     {'vocab_size': 256, 'd_model': 88, 'n_layers': 4, 'd_ff': 352, 'n_heads': 4, 'ssm_state_dim': 32},
     {'vocab_size': 256, 'd_model': 96, 'n_layers': 3, 'd_ff': 384, 'n_heads': 4, 'ssm_state_dim': 32},
     {'vocab_size': 256, 'd_model': 72, 'n_layers': 4, 'd_ff': 288, 'n_heads': 4, 'ssm_state_dim': 24},
