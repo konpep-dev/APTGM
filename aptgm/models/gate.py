@@ -18,8 +18,8 @@ class TokenGate(nn.Module):
         # Single scalar output per token
         self.ln = nn.LayerNorm(d_model)
         self.proj = nn.Linear(d_model, 1, bias=True)
-        # Initialize bias to 1.5 → gate starts at σ(1.5) ≈ 0.82 (attention bias)
-        nn.init.constant_(self.proj.bias, 1.5)
+        # Initialize bias to 2.2 → gate starts at σ(2.2) ≈ 0.90 (strong attention bias)
+        nn.init.constant_(self.proj.bias, 2.2)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
