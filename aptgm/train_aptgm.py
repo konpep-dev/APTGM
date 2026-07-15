@@ -38,7 +38,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
     )
     
     lambda_gate = config["training"]["lambda_gate"]
-    g_star = config["training"]["g_star"]
+    g_star_filler = config["training"].get("g_star_filler", 0.05)  # filler gate target
     
     pbar = tqdm(range(max_steps), desc="Training APTGM")
     for step in pbar:
@@ -62,14 +62,24 @@ def train_steps(model, config, device, max_steps, log_interval=10):
             logits[mask].view(-1, logits.size(-1)),
             labels[mask].view(-1),
         )
-        
-        # Compute gate regularization loss
+
+        # Identify token-type masks (shared between regularization and analysis)
+        kv_positions = 2 * config["data"]["num_kv_pairs"]
+        kv_mask = torch.zeros_like(labels, dtype=torch.bool)
+        kv_mask[:, :kv_positions] = True
+        filler_mask = ~mask & ~kv_mask
+
+        # Compute gate regularization loss (masked: only on filler tokens)
         # aux_info["gate_values"] is a list (one per layer) of [batch, seq_len]
         if len(aux_info["gate_values"]) > 0:
-            # Average across all layers
             gate_all_layers = torch.stack(aux_info["gate_values"], dim=0)  # [n_layers, batch, seq_len]
-            gate_mean = gate_all_layers.mean()
-            loss_gate = lambda_gate * (gate_mean - g_star) ** 2
+            gate_mean_across_layers = gate_all_layers.mean(dim=0)  # [batch, seq_len]
+
+            # Regularize ONLY filler tokens toward g_star_filler
+            g_filler = gate_mean_across_layers[filler_mask].mean() if filler_mask.any() else gate_mean_across_layers.mean()
+            loss_gate = lambda_gate * (g_filler - g_star_filler) ** 2
+
+            gate_mean = gate_mean_across_layers.mean()
             loss = loss_lm + loss_gate
         else:
             gate_mean = torch.tensor(0.0)
@@ -85,20 +95,8 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         if len(aux_info["gate_values"]) > 0:
             gate_vals = aux_info["gate_values"][-1]  # [batch, seq_len]
             
-            # Identify token types
-            # Query positions: where labels != -100
-            query_mask = (labels != -100)
-            
-            # KV positions: first 2*num_kv_pairs tokens
-            kv_positions = 2 * config["data"]["num_kv_pairs"]
-            kv_mask = torch.zeros_like(labels, dtype=torch.bool)
-            kv_mask[:, :kv_positions] = True
-            
-            # Filler positions: everything else (not query, not kv)
-            filler_mask = ~query_mask & ~kv_mask
-            
-            # Compute conditional means
-            gate_at_queries = gate_vals[query_mask].mean().item() if query_mask.any() else 0.0
+            # Compute conditional means (masks already defined above)
+            gate_at_queries = gate_vals[mask].mean().item() if mask.any() else 0.0
             gate_at_filler = gate_vals[filler_mask].mean().item() if filler_mask.any() else 0.0
             gate_at_kv = gate_vals[kv_mask].mean().item() if kv_mask.any() else 0.0
         else:
