@@ -3,6 +3,7 @@ Training script for APTGM and baselines.
 """
 
 import os
+import json
 import yaml
 import argparse
 from pathlib import Path
@@ -49,6 +50,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     losses = []
     accuracies = []
     gate_means = []
+    history = {"loss": [], "accuracy": [], "step": [], "gate_at_queries": [], "gate_at_filler": []}
     
     pbar = tqdm(range(config['training']['max_steps']), desc="Training")
     
@@ -79,8 +81,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         # Gate regularization (if gate values exist)
         loss_gate = 0.0
         if aux_info['gate_values']:
-            # Average gate across all layers and tokens
-            all_gates = torch.cat(aux_info['gate_values'], dim=0)  # [n_layers * batch, seq_len, 1]
+            all_gates = torch.cat(aux_info['gate_values'], dim=0)
             mean_gate = all_gates.mean()
             
             g_star = config['training']['g_star']
@@ -110,6 +111,14 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
             avg_acc = np.mean(accuracies[-100:]) if accuracies else 0.0
             avg_gate = np.mean(gate_means[-100:]) if gate_means else 0.0
             
+            history["loss"].append(avg_loss)
+            history["accuracy"].append(avg_acc)
+            history["step"].append(step)
+            if aux_info.get('gate_at_queries') is not None:
+                history["gate_at_queries"].append(aux_info['gate_at_queries'])
+            if aux_info.get('gate_at_filler') is not None:
+                history["gate_at_filler"].append(aux_info['gate_at_filler'])
+            
             pbar.set_postfix({
                 'loss': f'{avg_loss:.4f}',
                 'acc': f'{avg_acc:.3f}',
@@ -121,6 +130,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         'loss': np.mean(losses),
         'accuracy': np.mean(accuracies),
         'gate_mean': np.mean(gate_means) if gate_means else None,
+        'history': history,
     }
 
 
@@ -262,7 +272,7 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     
-    checkpoint_path = output_dir / f"{args.model_type}_seq{config['training']['seq_len']}.pt"
+    checkpoint_path = output_dir / "model.pt"
     torch.save({
         'model_state_dict': model.state_dict(),
         'config': config,
@@ -272,6 +282,13 @@ def main():
     }, checkpoint_path)
     
     print(f"\nCheckpoint saved to: {checkpoint_path}")
+    
+    # Save history
+    if 'history' in train_stats and train_stats['history']['step']:
+        history_path = output_dir / "history.json"
+        with open(history_path, "w") as f:
+            json.dump(train_stats['history'], f, indent=2)
+        print(f"History saved to: {history_path}")
 
 
 if __name__ == "__main__":
