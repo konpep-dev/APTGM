@@ -219,7 +219,7 @@ def save_report(config, history, param_count, save_path):
 | Total Steps | {config['training']['max_steps']} |
 | Warmup Steps | {config['training']['warmup_steps']} |
 | Gate Regularization (λ) | {config['training']['lambda_gate']} |
-| Target Gate (g*) | {config['training']['g_star']} |
+| Target Gate (g*) | {config['training'].get('g_star_filler', config['training'].get('g_star', 'N/A'))} |
 
 ## Data Configuration
 
@@ -296,7 +296,7 @@ def save_report(config, history, param_count, save_path):
 - **Optimizer**: AdamW
 - **Weight Decay**: {config['training']['weight_decay']}
 - **Gradient Clipping**: 1.0
-- **Gate Regularization**: λ = {config['training']['lambda_gate']}, g* = {config['training']['g_star']}
+- **Gate Regularization**: λ = {config['training']['lambda_gate']}, g* = {config['training'].get('g_star_filler', config['training'].get('g_star', 'N/A'))}
 
 ### Parameter Count
 - **Total Parameters**: {param_count:,}

@@ -5,32 +5,76 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>APTGM — Adaptive Per-Token Gated Mixing</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" crossorigin="anonymous">
 <script>
+  // Initialize theme before parsing page contents
+  (function() {
+    var savedTheme = localStorage.getItem('aptgm-theme');
+    var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  })();
+
   window.MathJax = {
+    options: {
+      menuOptions: {
+        settings: {
+          assistiveMml: false
+        }
+      }
+    },
     tex: { inlineMath: [['\\(','\\)']], displayMath: [['\\[','\\]']] },
     svg: { fontCache: 'global' }
   };
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js"></script>
 <style>
+  /* Hide MathJax assistive MathML to prevent duplicate rendering in html2canvas */
+  mjx-assistive-mml, mjx-assistive-mml * {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    width: 0 !important;
+    height: 0 !important;
+    overflow: hidden !important;
+  }
+
   :root{
-    --bg: #f3f6fa;
-    --paper: #fafbfd;
-    --ink: #1a2634;
-    --ink-soft: #4a6178;
-    --ink-faint: #7a94a8;
+    --bg: #f5f1ec;
+    --paper: #fcfaf8;
+    --ink: #1e2a35;
+    --ink-soft: #4f6a7d;
+    --ink-faint: #7f9bae;
     --accent: #1a6b8a;
     --accent-deep: #0d3e57;
     --accent-soft: #cde4f0;
-    --accent-line: #a8cce0;
-    --accent-glow: #e2f0f8;
-    --rule: #d0dce6;
-    --math-bg: #eaf2f8;
+    --accent-line: #b8d4e8;
+    --accent-glow: #e6f1f8;
+    --rule: #d9d6d0;
+    --math-bg: #eef4f8;
     --display: 'Fraunces', Georgia, serif;
     --body-serif: 'Newsreader', Georgia, serif;
     --sans: 'Inter', -apple-system, sans-serif;
     --mono: 'IBM Plex Mono', monospace;
+  }
+
+  :root.dark{
+    --bg: #151c24;
+    --paper: #1b242e;
+    --ink: #dce4ec;
+    --ink-soft: #9aabb8;
+    --ink-faint: #6a7f90;
+    --accent: #5fa8c9;
+    --accent-deep: #8ac4e0;
+    --accent-soft: #1c3340;
+    --accent-line: #2a4a5c;
+    --accent-glow: #182a34;
+    --rule: #2a333e;
+    --math-bg: #1a2630;
   }
 
   * { box-sizing: border-box; }
@@ -38,7 +82,6 @@
   body{
     margin:0;
     background: var(--bg);
-    background-image: radial-gradient(ellipse at 50% 0%, rgba(26, 107, 138, 0.04) 0%, transparent 60%);
     color: var(--ink);
     font-family: var(--body-serif);
     -webkit-font-smoothing: antialiased;
@@ -80,10 +123,6 @@
     letter-spacing: -0.018em;
     margin: 0 0 16px;
     color: var(--ink);
-    background: linear-gradient(135deg, var(--ink) 40%, var(--accent-deep) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
   }
   h1.title em{
     font-style: italic;
@@ -108,23 +147,66 @@
     font-size: 12.5px;
     color: var(--ink-faint);
     font-family: var(--mono);
-    padding: 16px 20px;
-    border: 1px solid var(--accent-soft);
-    background: var(--accent-glow);
-    border-radius: 4px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--rule);
     margin-bottom: 44px;
   }
   .meta-row span b{ color: var(--ink-soft); font-weight: 600; }
 
+  .theme-toggle{
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 100;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-soft);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    opacity: 0.7;
+  }
+  .theme-toggle:hover{ opacity: 1; transform: scale(1.05); }
+  .theme-toggle svg{ width: 20px; height: 20px; }
+
+  .dl-btn{
+    position: fixed;
+    bottom: 24px;
+    right: 76px;
+    z-index: 100;
+    height: 44px;
+    padding: 0 16px;
+    border-radius: 22px;
+    border: 1px solid var(--rule);
+    background: var(--paper);
+    color: var(--ink-soft);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--sans);
+    font-size: 13px;
+    transition: all 0.2s;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    opacity: 0.7;
+  }
+  .dl-btn:hover{ opacity: 1; }
+  .dl-btn svg{ width: 16px; height: 16px; }
+
   /* ---------- Abstract ---------- */
   .abstract{
-    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--paper) 80%);
+    background: var(--accent-glow);
     border: 1px solid var(--accent-line);
     border-left: 4px solid var(--accent);
     border-radius: 4px;
     padding: 28px 32px;
     margin-bottom: 58px;
-    box-shadow: 0 1px 4px rgba(26, 107, 138, 0.06);
   }
   .abstract .label{
     font-family: var(--sans);
@@ -154,17 +236,14 @@
     display:flex;
     align-items:baseline;
     gap: 13px;
-    border-bottom: 2px solid var(--accent-soft);
-    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 8px;
   }
   h2 .num{
     font-family: var(--mono);
     font-size: 14px;
     color: var(--accent);
     font-weight: 600;
-    background: var(--accent-soft);
-    padding: 2px 8px;
-    border-radius: 3px;
   }
   h3{
     font-family: var(--sans);
@@ -181,15 +260,12 @@
   /* ---------- Comparison table ---------- */
   table{
     width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
+    border-collapse: collapse;
     margin: 22px 0 8px;
     font-size: 14px;
     font-family: var(--sans);
     background: var(--paper);
-    border: 1px solid var(--accent-line);
-    border-radius: 4px;
-    overflow: hidden;
+    border: 1px solid var(--rule);
   }
   th, td{
     padding: 11px 15px;
@@ -204,17 +280,14 @@
     color: var(--paper);
     background: var(--accent-deep);
     font-weight: 600;
-    padding: 10px 15px;
   }
   td.hl{ color: var(--accent-deep); font-weight: 600; }
   tr:last-child td{ border-bottom: none; }
   tr:last-child{ background: var(--accent-glow); }
-  tr:hover td{ background: rgba(26, 107, 138, 0.03); }
-  tr:last-child:hover td{ background: var(--accent-glow); }
 
   /* ---------- Math blocks ---------- */
   .eq-block{
-    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--math-bg) 100%);
+    background: var(--math-bg);
     border: 1px solid var(--accent-line);
     border-radius: 4px;
     padding: 20px 26px;
@@ -234,22 +307,20 @@
 
   code.inline{
     font-family: var(--mono);
-    background: var(--accent-glow);
+    background: var(--accent-soft);
     color: var(--accent-deep);
     padding: 1px 6px;
     border-radius: 3px;
     font-size: 0.88em;
-    border: 1px solid var(--accent-soft);
   }
 
   /* ---------- Diagram ---------- */
   .diagram-wrap{
     background: var(--paper);
-    border: 1px solid var(--accent-line);
-    border-radius: 8px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
     padding: 32px 20px 24px;
     margin: 28px 0 10px;
-    box-shadow: 0 2px 8px rgba(26, 107, 138, 0.05);
   }
   .diagram-caption{
     font-family: var(--sans);
@@ -274,27 +345,25 @@
     position: absolute;
     left: 0;
     color: var(--accent);
-    font-weight: 700;
+    font-weight: 600;
   }
   ul.clean li b{ color: var(--accent-deep); }
-  ul.clean li:last-child{ border-bottom-color: var(--accent-soft); }
 
   .risk{
     border-left: 4px solid var(--accent);
-    background: linear-gradient(135deg, var(--accent-glow) 0%, var(--paper) 100%);
+    background: var(--accent-glow);
     padding: 16px 22px;
     border-radius: 4px;
     font-family: var(--sans);
     font-size: 14px;
     color: var(--ink-soft);
     margin: 12px 0;
-    box-shadow: 0 1px 4px rgba(26, 107, 138, 0.05);
   }
 
   footer{
     margin-top: 84px;
     padding: 24px 0 0;
-    border-top: 2px solid var(--accent-soft);
+    border-top: 1px solid var(--rule);
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--ink-faint);
@@ -323,6 +392,8 @@
     footer{ flex-direction: column; gap: 6px; font-size: 10px; }
     section{ margin-bottom: 40px; }
     ul.clean li{ font-size: 13.5px; padding: 9px 0 9px 20px; }
+    .theme-toggle{ bottom: 16px; right: 16px; width: 38px; height: 38px; }
+    .dl-btn{ bottom: 16px; right: 62px; height: 38px; font-size: 11px; padding: 0 12px; }
   }
 
   @media (max-width: 480px){
@@ -336,29 +407,257 @@
 <body>
 <div class="page">
 
-  <div class="kicker">
-    Architecture Note · Draft v0.1
-    <a href="https://github.com/konpep-dev" target="_blank" style="text-decoration: none; margin-left: 12px;">
-      <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle;">
-        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-      </svg>
-      @konpep-dev
-    </a>
-  </div>
-  <h1 class="title">Adaptive Per-Token<br>Gated <em>Mixing</em></h1>
-  <p class="subtitle">A continuous, content-dependent fusion of state-space and attention token mixing, decided independently for every token.</p>
+  <div class="intro-section">
+    <div class="kicker">
+      Architecture Note · v1.0
+      <a href="https://github.com/konpep-dev" target="_blank" style="text-decoration: none; margin-left: 12px;">
+        <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle;">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        @konpep-dev
+      </a>
+    </div>
+    <h1 class="title">Adaptive Per-Token<br>Gated <em>Mixing</em></h1>
+    <p class="subtitle">A continuous, content-dependent fusion of state-space and attention token mixing, decided independently for every token.</p>
 
-  <div class="meta-row">
-    <span><b>Name</b> · APTGM</span>
-    <span><b>Category</b> · Sequence-mixing architecture</span>
-    <span><b>Status</b> · Proof-of-concept validated</span>
-    <span><b>Hardware</b> · CPU-only experiments (259k-334k params)</span>
+    <div class="meta-row">
+      <span><b>Name</b> · APTGM</span>
+      <span><b>Category</b> · Sequence-mixing architecture</span>
+      <span><b>Status</b> · Proof-of-concept validated</span>
+      <span><b>Hardware</b> · T4 GPU (7k steps, ~400k params)</span>
+    </div>
+
+    <div class="abstract">
+      <span class="label">Abstract</span>
+      <p>Hybrid state-space/attention models — Falcon-H1, Hymba, Jamba, Zamba — combine the two mechanisms either with a fixed ratio or with hard, discrete routing per token. We propose a scalar gate <code class="inline">g_t</code>, learned and conditioned only on the current token, that produces a <em>continuous</em> blend of the two branch outputs within a single layer. The goal is for the model to learn to pay for expensive attention only on tokens that genuinely require precise long-range recall, while defaulting to the cheaper state-space branch everywhere else.</p>
+    </div>
   </div>
 
-  <div class="abstract">
-    <span class="label">Abstract</span>
-    <p>Hybrid state-space/attention models — Falcon-H1, Hymba, Jamba, Zamba — combine the two mechanisms either with a fixed ratio or with hard, discrete routing per token. We propose a scalar gate <code class="inline">g_t</code>, learned and conditioned only on the current token, that produces a <em>continuous</em> blend of the two branch outputs within a single layer. The goal is for the model to learn to pay for expensive attention only on tokens that genuinely require precise long-range recall, while defaulting to the cheaper state-space branch everywhere else.</p>
-  </div>
+  <button class="theme-toggle" id="themeBtn" aria-label="Toggle theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="pointer-events:none;width:20px;height:20px">
+      <path id="themeIcon" d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+    </svg>
+  </button>
+
+  <button class="dl-btn" id="dlBtn" aria-label="Download as PNG">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/>
+      <line x1="12" y1="15" x2="12" y2="3"/>
+    </svg>
+    Save PNG
+  </button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script>
+    var themeBtn = document.getElementById('themeBtn');
+    var themeIcon = document.getElementById('themeIcon');
+    var dlBtn = document.getElementById('dlBtn');
+
+    var moonPath = 'M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z';
+    var sunPath  = 'M12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42';
+
+    function updateThemeIcon(isDark) {
+      if (themeIcon) {
+        themeIcon.setAttribute('d', isDark ? sunPath : moonPath);
+      }
+    }
+
+    // Set initial icon state based on the class set by the head script
+    var initialDark = document.documentElement.classList.contains('dark');
+    updateThemeIcon(initialDark);
+
+    if (themeBtn) {
+      themeBtn.onclick = function() {
+        document.documentElement.classList.toggle('dark');
+        var isDark = document.documentElement.classList.contains('dark');
+        localStorage.setItem('aptgm-theme', isDark ? 'dark' : 'light');
+        updateThemeIcon(isDark);
+      };
+    }
+
+    if (dlBtn) {
+      dlBtn.onclick = async function() {
+        var html2canvas = window.html2canvas;
+        var JSZip = window.JSZip;
+        if (!html2canvas) { alert('html2canvas not loaded yet, please wait.'); return; }
+        if (!JSZip) { alert('JSZip library not loaded yet, please wait.'); return; }
+        
+        var elementsToCapture = [];
+        
+        var intro = document.querySelector('.intro-section');
+        if (intro) {
+          elementsToCapture.push({
+            element: intro,
+            filename: '00_introduction.png'
+          });
+        }
+
+        var sections = document.querySelectorAll('.page > section');
+        sections.forEach(function(section) {
+          var h2 = section.querySelector('h2');
+          var filename = 'section.png';
+          if (h2) {
+            var text = h2.innerText || h2.textContent;
+            filename = text.toLowerCase()
+              .replace(/[^a-z0-9\s-]/g, '') // remove special characters
+              .trim()
+              .replace(/[\s-]+/g, '_')     // replace spaces/dashes with underscore
+              + '.png';
+          } else {
+            filename = 'section_' + (elementsToCapture.length) + '.png';
+          }
+          elementsToCapture.push({
+            element: section,
+            filename: filename
+          });
+        });
+
+        if (elementsToCapture.length === 0) {
+          alert('No sections found to download.');
+          return;
+        }
+
+        // Show a progress indicator overlay
+        var progressAlert = document.createElement('div');
+        progressAlert.style.cssText = 'position:fixed;top:24px;left:50%;transform:translateX(-50%);background:var(--paper);color:var(--ink);border:1px solid var(--accent-line);padding:14px 28px;border-radius:24px;box-shadow:0 6px 20px rgba(0,0,0,0.15);z-index:9999;font-family:var(--sans);font-size:13px;font-weight:600;display:flex;align-items:center;gap:10px;';
+        
+        var spinner = document.createElement('div');
+        spinner.style.cssText = 'width:16px;height:16px;border:2px solid var(--accent-soft);border-top:2px solid var(--accent);border-radius:50%;animation:spin 1s linear infinite;';
+        
+        var styleTag = document.createElement('style');
+        styleTag.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+        document.head.appendChild(styleTag);
+        
+        progressAlert.appendChild(spinner);
+        var progressText = document.createElement('span');
+        progressText.textContent = 'Preparing export...';
+        progressAlert.appendChild(progressText);
+        document.body.appendChild(progressAlert);
+
+        // Hide buttons during capture
+        if (themeBtn) themeBtn.style.visibility = 'hidden';
+        if (dlBtn) dlBtn.style.visibility = 'hidden';
+
+        // Find all external stylesheets and temporarily disable them to prevent CORS/SecurityError on file://
+        var externalStylesheets = [];
+        Array.from(document.styleSheets).forEach(function(sheet) {
+          try {
+            // Attempting to access cssRules on cross-origin stylesheet throws SecurityError
+            var rules = sheet.cssRules;
+          } catch (e) {
+            if (sheet.ownerNode) {
+              sheet.ownerNode.disabled = true;
+              externalStylesheets.push(sheet.ownerNode);
+            }
+          }
+        });
+
+        var computedBg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f5f1ec';
+
+        function renderElement(element, includeImages) {
+          var clone = element.cloneNode(true);
+          [].forEach.call(clone.querySelectorAll('.theme-toggle, .dl-btn'), function(el) { el.remove(); });
+
+          if (!includeImages) {
+            // Replace <img> tags with styled text placeholders to avoid tainting canvas on file:// protocol
+            [].forEach.call(clone.querySelectorAll('img'), function(img) {
+              var placeholder = document.createElement('div');
+              placeholder.style.cssText = 'border: 1px dashed var(--rule); padding: 24px; text-align: center; margin: 18px 0; background: var(--paper); color: var(--ink-soft); font-family: var(--sans); font-size: 13px; font-weight: 500; border-radius: 4px;';
+              placeholder.textContent = '[Plot: ' + (img.alt || 'Visual comparison chart') + ']';
+              img.parentNode.replaceChild(placeholder, img);
+            });
+          }
+
+          var wrapper = document.createElement('div');
+          // Render at 800px width with 32px padding and the appropriate background color
+          wrapper.style.cssText = 'position:fixed;left:-9999px;top:0;z-index:-1;width:800px;box-sizing:border-box;padding:32px;background:' + computedBg + ';color:var(--ink);font-family:var(--body-serif);';
+          wrapper.appendChild(clone);
+          document.body.appendChild(wrapper);
+
+          return html2canvas(wrapper, {
+            useCORS: true,
+            scale: 2,
+            backgroundColor: computedBg,
+            logging: false,
+            allowTaint: false
+          }).then(function(canvas) {
+            document.body.removeChild(wrapper);
+            return canvas;
+          }).catch(function(err) {
+            if (document.body.contains(wrapper)) {
+              document.body.removeChild(wrapper);
+            }
+            throw err;
+          });
+        }
+
+        var zip = new JSZip();
+        var zipFolder = zip.folder("aptgm_paper_screenshots");
+        var hasTaintError = false;
+
+        async function processCaptures(includeImages) {
+          for (var i = 0; i < elementsToCapture.length; i++) {
+            var item = elementsToCapture[i];
+            progressText.textContent = 'Generating ' + (includeImages ? '' : 'Safe Mode ') + 'images: ' + (i + 1) + '/' + elementsToCapture.length;
+            
+            var canvas = await renderElement(item.element, includeImages);
+            
+            var dataUrl = canvas.toDataURL('image/png');
+            var base64Data = dataUrl.split(',')[1];
+            
+            zipFolder.file(item.filename, base64Data, {base64: true});
+            
+            // Allow event loop to process UI updates
+            await new Promise(function(resolve) { setTimeout(resolve, 100); });
+          }
+        }
+
+        try {
+          // Attempt capture with live images
+          await processCaptures(true);
+        } catch (e) {
+          console.warn("Standard capture failed or tainted, retrying in Safe Mode...", e);
+          hasTaintError = true;
+          // Clear zip folder and rebuild in Safe Mode (placeholders for images)
+          zip = new JSZip();
+          zipFolder = zip.folder("aptgm_paper_screenshots");
+          await processCaptures(false);
+        }
+
+        progressText.textContent = 'Creating ZIP file...';
+        
+        try {
+          var content = await zip.generateAsync({type: "blob"});
+          var link = document.createElement('a');
+          link.download = hasTaintError ? 'aptgm_paper_screenshots_safemode.zip' : 'aptgm_paper_screenshots.zip';
+          link.href = URL.createObjectURL(content);
+          link.click();
+          
+          if (hasTaintError) {
+            alert('Notice: The ZIP was generated in "Safe Mode" (without local image plots) due to browser security restrictions on the file:// protocol.\n\nTo export the full ZIP with all live image plots, please run this page via a local web server (e.g. VS Code Live Server or python -m http.server).');
+          }
+        } catch (err) {
+          console.error(err);
+          alert('Failed to generate ZIP: ' + err.message);
+        } finally {
+          // Cleanup
+          if (document.body.contains(progressAlert)) {
+            document.body.removeChild(progressAlert);
+          }
+          if (document.head.contains(styleTag)) {
+            document.head.removeChild(styleTag);
+          }
+          externalStylesheets.forEach(function(node) {
+            node.disabled = false;
+          });
+          if (themeBtn) themeBtn.style.visibility = '';
+          if (dlBtn) dlBtn.style.visibility = '';
+        }
+      };
+    }
+  </script>
 
   <section>
     <h2><span class="num">01</span> Where the gap sits</h2>
@@ -966,12 +1265,12 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
     <div class="risk" style="border-left-color: #4a9d6b; background: #e8f5ed; color: #1e5a3a;">
       <strong>Recommendation:</strong> Run the fixed APTGM training (masked regularization) to validate that the negative routing gap was purely a regularization artifact. If gate@queries reaches 0.8+ and accuracy surpasses 25%, the APTGM architecture is confirmed viable for larger-scale experiments.
     </div>
-  </section>
 
-  <footer>
-    <span>APTGM — architecture note</span>
-    <span>GPU experiments · 7k steps · 400k params</span>
-  </footer>
+    <footer>
+      <span>APTGM — architecture note</span>
+      <span>GPU experiments · 7k steps · 400k params</span>
+    </footer>
+  </section>
 
 </div>
 </body>
