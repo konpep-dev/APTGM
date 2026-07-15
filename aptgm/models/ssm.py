@@ -60,8 +60,8 @@ class SelectiveSSM(nn.Module):
         """Initialize parameters."""
         nn.init.xavier_uniform_(self.W_delta.weight)
         nn.init.zeros_(self.W_delta.bias)
-        nn.init.xavier_uniform_(self.dt_proj.weight)
-        nn.init.zeros_(self.dt_proj.bias)
+        nn.init.xavier_uniform_(self.dt_proj.weight, gain=0.1)
+        nn.init.constant_(self.dt_proj.bias, -5.0)  # delta ~ softplus(-5) ≈ 0.007
         nn.init.xavier_uniform_(self.W_B.weight)
         nn.init.xavier_uniform_(self.W_C.weight)
     
