@@ -74,40 +74,78 @@ Trained on **MQAR (Multi-Query Associative Recall)** — a synthetic task requir
 
 ## 🏗️ Architecture
 
-<div align="center">
-  
-```xml
-<svg viewBox="0 0 720 300" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:720px;height:auto;">
-  <circle cx="360" cy="26" r="16" fill="#eef5f8" stroke="#2c6e8e" stroke-width="1.4"/>
-  <text x="360" y="30" text-anchor="middle" font-size="12" font-family="monospace" fill="#1c4a61">x_t</text>
-  <line x1="360" y1="42" x2="360" y2="68" stroke="#c3dbe6" stroke-width="1.4"/>
-  <line x1="360" y1="68" x2="180" y2="100" stroke="#c3dbe6" stroke-width="1.4"/>
-  <line x1="360" y1="68" x2="540" y2="100" stroke="#c3dbe6" stroke-width="1.4"/>
-
-  <rect x="90" y="100" width="180" height="64" rx="6" fill="#fbfdfe" stroke="#dde6ec" stroke-width="1.2"/>
-  <text x="180" y="126" text-anchor="middle" font-size="12.5" font-family="sans-serif" font-weight="600" fill="#16232f">SSM branch</text>
-  <text x="180" y="146" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#8299a8">O(T·n) — cheap</text>
-
-  <rect x="450" y="100" width="180" height="64" rx="6" fill="#fbfdfe" stroke="#dde6ec" stroke-width="1.2"/>
-  <text x="540" y="126" text-anchor="middle" font-size="12.5" font-family="sans-serif" font-weight="600" fill="#16232f">Attention branch</text>
-  <text x="540" y="146" text-anchor="middle" font-size="10.5" font-family="monospace" fill="#8299a8">O(T²·d) — costly</text>
-
-  <line x1="180" y1="164" x2="300" y2="205" stroke="#c3dbe6" stroke-width="1.4"/>
-  <line x1="540" y1="164" x2="420" y2="205" stroke="#c3dbe6" stroke-width="1.4"/>
-  <line x1="360" y1="70" x2="360" y2="205" stroke="#e5b98a" stroke-width="1.2" stroke-dasharray="3 3"/>
-
-  <rect x="290" y="205" width="140" height="52" rx="26" fill="#dbe9f0" stroke="#2c6e8e" stroke-width="1.4"/>
-  <text x="360" y="227" text-anchor="middle" font-size="12.5" font-family="sans-serif" fill="#1c4a61" font-weight="700">gate g_t</text>
-  <text x="360" y="243" text-anchor="middle" font-size="9.5" font-family="monospace" fill="#2c6e8e">σ(w^T·x_t + b)</text>
-
-  <line x1="360" y1="257" x2="360" y2="280" stroke="#2c6e8e" stroke-width="1.4"/>
-  <circle cx="360" cy="288" r="4" fill="#2c6e8e"/>
-  <text x="380" y="292" font-size="12" font-family="monospace" fill="#16232f">z_t = g_t·y_attn + (1−g_t)·y_ssm</text>
-</svg>
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Input Tokens                           │
+│                    [batch, seq_len]                         │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Embedding Layer                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+    ╔══════════════════▼═══════════════════════════════════╗
+    ║  for layer in 1..N_LAYERS:                          ║
+    ║                                                      ║
+    ║  ┌────────────────────────────────────────────┐    ║
+    ║  │          LayerNorm(x)                      │    ║
+    ║  └───┬──────────────────────────────┬─────────┘    ║
+    ║      │                              │               ║
+    ║      ▼                              ▼               ║
+    ║  ┌──────────┐                 ┌──────────┐         ║
+    ║  │   SSM    │                 │ Attention│         ║
+    ║  │ O(T·n)   │                 │ O(T²·d)  │         ║
+    ║  │  cheap   │                 │ expensive│         ║
+    ║  │          │                 │          │         ║
+    ║  │ Δ=soft+  │                 │ Q,K,V=Wx │         ║
+    ║  │ h=A̅·h+B̅·x│                 │ attn=    │         ║
+    ║  │ y=C·h+D·x│                 │ soft(QK) │         ║
+    ║  └────┬─────┘                 └─────┬────┘         ║
+    ║       │                             │               ║
+    ║       │      ┌─────────────┐        │               ║
+    ║       └─────►│  Gate g_t   │◄───────┘               ║
+    ║              │σ(wᵀ·LN(x)+b)│                        ║
+    ║              └──────┬──────┘                        ║
+    ║                     │                                ║
+    ║                     ▼                                ║
+    ║       ╔═════════════════════════════╗               ║
+    ║       ║ z = g·y_attn + (1-g)·y_ssm ║               ║
+    ║       ╚═════════════════════════════╝               ║
+    ║                     │                                ║
+    ║                     ▼                                ║
+    ║       ┌────────────────────────────┐                ║
+    ║       │      x = x + z             │                ║
+    ║       └────────────┬───────────────┘                ║
+    ║                    │                                 ║
+    ║                    ▼                                 ║
+    ║       ┌────────────────────────────┐                ║
+    ║       │  x = x + FFN(LN(x))        │                ║
+    ║       └────────────┬───────────────┘                ║
+    ║                    │                                 ║
+    ╚════════════════════╪═════════════════════════════════╝
+                         │ (loop back or continue)
+                         ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Final LayerNorm                           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      LM Head                                │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Logits [batch, seq_len, vocab]           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-<p><em>The gate observes only the current token x_t (dashed line) — the layer stays fully causal</em></p>
-</div>
+**Key Points:**
+- **Gate observes LayerNorm(x)** - ensures causality and content-dependent routing
+- **SSM branch:** O(T·n) - cheap, sequential recurrence with state decay
+- **Attention branch:** O(T²·d) - expensive, direct key-value lookup, no decay
+- **Gate g_t ∈ (0,1):** Learned scalar that blends the two branches per token
 
 **Mathematical Formulation:**
 
