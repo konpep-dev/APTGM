@@ -13,7 +13,6 @@ Implements diagonal SSM with input-dependent parameters:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
 
 
 class SelectiveSSM(nn.Module):
@@ -54,17 +53,8 @@ class SelectiveSSM(nn.Module):
         nn.init.xavier_uniform_(self.W_C.weight)
 
     @staticmethod
-    def _scan_4d(
-        x: torch.Tensor,
-        delta: torch.Tensor,
-        A: torch.Tensor,
-        B: torch.Tensor,
-        C: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        4D parallel scan with gradient checkpointing.
-        All intermediate 4D tensors are freed when this function returns.
-        """
+    def _scan_4d(x, delta, A, B, C):
+        """4D parallel scan — fastest, uses ~2 GB peak per layer."""
         _, _, d_model = x.shape
         state_dim = A.shape[0]
 
@@ -82,10 +72,7 @@ class SelectiveSSM(nn.Module):
         B = self.W_B(x)
         C = self.W_C(x)
 
-        y_ssm = checkpoint(
-            SelectiveSSM._scan_4d, x, delta, A, B, C,
-            use_reentrant=False, preserve_rng_state=False,
-        )
+        y_ssm = SelectiveSSM._scan_4d(x, delta, A, B, C)
 
         return y_ssm + self.D * x
 
@@ -96,23 +83,21 @@ def test_ssm():
     seq_len = 16
     d_model = 64
     state_dim = 8
-    
+
     ssm = SelectiveSSM(d_model, state_dim)
     x = torch.randn(batch, seq_len, d_model)
-    
+
     y = ssm(x)
-    
+
     print(f"Input shape: {x.shape}")
     print(f"Output shape: {y.shape}")
     print(f"A parameter (first 5): {-torch.exp(ssm.A_log[:5])}")
     print(f"Output mean: {y.mean().item():.4f}, std: {y.std().item():.4f}")
-    
-    # Test that A is negative
+
     A = -torch.exp(ssm.A_log)
     assert (A < 0).all(), "A must be negative for stability"
     print("✓ A is negative (stable)")
-    
-    # Test gradient flow
+
     loss = y.sum()
     loss.backward()
     assert ssm.A_log.grad is not None
