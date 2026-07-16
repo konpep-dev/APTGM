@@ -66,10 +66,8 @@ def train_with_logging(model, optimizer, scheduler, config, device):
             num_kv_pairs=config['data']['num_kv_pairs'],
             num_queries=config['data']['num_queries'],
             seed=None,
+            device=device,
         )
-        
-        input_ids = input_ids.to(device)
-        target_ids = target_ids.to(device)
         
         # Forward
         logits, aux_info = model(input_ids)

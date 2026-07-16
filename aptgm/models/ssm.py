@@ -85,11 +85,8 @@ class SelectiveSSM(nn.Module):
         B = self.W_B(x)  # [batch, seq_len, state_dim]
         C = self.W_C(x)  # [batch, seq_len, state_dim]
         
-        # Run SSM
-        if self.use_fast_path and hasattr(torch, 'associative_scan'):
-            y = self._ssm_parallel(x, A, B, C, delta)
-        else:
-            y = self._ssm_sequential(x, A, B, C, delta)
+        # Run SSM (always uses vectorized parallel scan)
+        y = self._ssm_sequential(x, A, B, C, delta)
         
         # Add skip connection
         y = y + self.D * x
@@ -104,53 +101,33 @@ class SelectiveSSM(nn.Module):
         C: torch.Tensor,
         delta: torch.Tensor,
     ) -> torch.Tensor:
-        """Sequential implementation of SSM recurrence."""
+        """
+        SSM recurrence solved analytically using cumulative product/sum.
+        
+        h_t = a_t * h_{t-1} + b_t  has closed-form:
+            P_t  = cumprod(a_t)
+            h_t  = P_t * cumsum(b_t / P_t)
+        
+        This is 4 native PyTorch kernels (cumprod, div, cumsum, mul)
+        instead of O(log T) scan steps. No Python loops, no memory blowup.
+        """
         batch, seq_len, d_model = x.shape
         
-        # Expand A to [d_model, state_dim] for broadcasting
-        # Each channel has its own state
-        A_expanded = repeat(A, 'n -> d n', d=d_model)  # [d_model, state_dim]
+        # a_t = exp(Δ_t * A)  — transition factor  [B, T, D, N]
+        A_4d = repeat(A, 'n -> 1 1 d n', d=d_model)
+        a = torch.exp(delta.unsqueeze(-1) * A_4d)
         
-        # Initialize hidden state
-        h = torch.zeros(batch, d_model, self.state_dim, device=x.device, dtype=x.dtype)
+        # b_t = Δ_t * B_t * x_t  — input to state  [B, T, D, N]
+        b = delta.unsqueeze(-1) * B.unsqueeze(2) * x.unsqueeze(-1)
         
-        outputs = []
-        for t in range(seq_len):
-            x_t = x[:, t, :]  # [batch, d_model]
-            delta_t = delta[:, t, :]  # [batch, d_model]
-            B_t = B[:, t, :]  # [batch, state_dim]
-            C_t = C[:, t, :]  # [batch, state_dim]
-            
-            # Discretize: Ā_t = exp(Δ_t * A)
-            A_bar = torch.exp(delta_t.unsqueeze(-1) * A_expanded)  # [batch, d_model, state_dim]
-            
-            # B̄_t = Δ_t * B_t (expand for broadcasting)
-            B_bar = delta_t.unsqueeze(-1) * B_t.unsqueeze(1)  # [batch, d_model, state_dim]
-            
-            # State update: h_t = Ā_t ⊙ h_{t-1} + B̄_t ⊙ x_t
-            x_t_expanded = x_t.unsqueeze(-1)  # [batch, d_model, 1]
-            h = A_bar * h + B_bar * x_t_expanded
-            
-            # Output: y_t = C_t · h_t
-            y_t = (C_t.unsqueeze(1) * h).sum(dim=-1)  # [batch, d_model]
-            
-            outputs.append(y_t)
+        # Solve recurrence via prefix transformation (4 kernels total)
+        P = torch.cumprod(a, dim=1)            # P_t = prod_{i=0}^{t} a_i
+        h = P * torch.cumsum(b / P, dim=1)     # h_t = P_t * cumsum(b_i / P_i)
         
-        y = torch.stack(outputs, dim=1)  # [batch, seq_len, d_model]
+        # Output: y_t = C_t · h_t
+        y = (C.unsqueeze(2) * h).sum(dim=-1)   # [B, T, D]
+        
         return y
-    
-    def _ssm_parallel(
-        self,
-        x: torch.Tensor,
-        A: torch.Tensor,
-        B: torch.Tensor,
-        C: torch.Tensor,
-        delta: torch.Tensor,
-    ) -> torch.Tensor:
-        """Parallel implementation using associative scan (if available)."""
-        # Fallback to sequential for now
-        # torch.associative_scan is not widely available yet
-        return self._ssm_sequential(x, A, B, C, delta)
 
 
 def test_ssm():

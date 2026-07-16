@@ -53,9 +53,8 @@ def train_steps(model, config, device, max_steps, log_interval=10):
             num_kv_pairs=config["data"]["num_kv_pairs"],
             num_queries=config["data"]["num_queries"],
             seed=None,
+            device=device,
         )
-        input_ids = input_ids.to(device)
-        labels = labels.to(device)
         
         # Forward with AMP
         with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):

@@ -46,9 +46,8 @@ def train_steps(model, config, device, max_steps, log_interval=10, model_name="m
             vocab_size=config["data"]["vocab_size"],
             num_kv_pairs=config["data"]["num_kv_pairs"],
             num_queries=config["data"]["num_queries"],
+            device=device,
         )
-        input_ids = input_ids.to(device)
-        labels = labels.to(device)
         
         # Forward
         logits, aux_info = model(input_ids)

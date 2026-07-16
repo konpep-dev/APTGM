@@ -62,9 +62,8 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
             num_kv_pairs=config['data']['num_kv_pairs'],
             num_queries=config['data']['num_queries'],
             seed=None,
+            device=device,
         )
-        input_ids = input_ids.to(device)
-        target_ids = target_ids.to(device)
         
         # Forward with AMP
         with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
@@ -152,10 +151,8 @@ def evaluate(model, config, device, num_batches=50):
                 num_kv_pairs=config['data']['num_kv_pairs'],
                 num_queries=config['data']['num_queries'],
                 seed=None,
+                device=device,
             )
-            
-            input_ids = input_ids.to(device)
-            target_ids = target_ids.to(device)
             
             logits, aux_info = model(input_ids)
             
