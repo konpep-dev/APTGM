@@ -908,7 +908,16 @@
       \]
     </div>
 
-<h3>5.4 — Diagnostic: gate value at query vs. filler positions</h3>
+    <h3>5.3 — Expected behavior</h3>
+    <p>An SSM with diagonal \(A\) (as in Mamba/S4) suffers from <em>memory decay</em> — representations of early key-value pairs fade as the state propagates forward through dozens or hundreds of filler tokens. Attention, by contrast, has direct access to all past positions with no decay.</p>
+    <table>
+      <tr><th>Model</th><th>seq_len=64</th><th>seq_len=512</th><th>Why</th></tr>
+      <tr><td>SSM-only</td><td>~80–90%</td><td>&lt; 50%</td><td>State decay over long filler span</td></tr>
+      <tr><td>Attention-only</td><td>~100%</td><td>~100%</td><td>Direct key-value lookup, no decay</td></tr>
+      <tr><td class="hl">APTGM (ours)</td><td class="hl">~100%</td><td class="hl">~95–100%</td><td class="hl">Gate learns to route queries to attention</td></tr>
+    </table>
+
+    <h3>5.4 — Diagnostic: gate value at query vs. filler positions</h3>
     <p>The single most important metric for validating the gate's learned behavior is not just the average \(\bar g_t\), but the <em>conditional mean</em> split by token type:</p>
     <div class="eq-block">
       \[
@@ -1162,25 +1171,25 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
     <p>To prove this is purely a capacity issue, we scale all architectures to <strong>1M parameters</strong> (d_model=128).</p>
 
     <h3>9.5 — 1M parameter scale configs (d_model=128)</h3>
-    <p>All three architectures scaled to ~1M parameters for the capacity ablation (seq_len=256, batch_size=64, 7000 steps, T4):</p>
+    <p>All three architectures scaled to ~1M parameters for the capacity ablation:</p>
 
     <h4>APTGM (~1.1M params)</h4>
     <pre><code>model:
   type: "aptgm"
   d_model: 128
   n_layers: 4
-  ssm_state_dim: 16
+  ssm_state_dim: 32
   n_heads: 4
   n_kv_heads: 4
-  d_ff: 512          # ~1.1M params</code></pre>
+  d_ff: 896          # ~1.1M params</code></pre>
 
     <h4>Pure SSM / Mamba (~1.0M params)</h4>
     <pre><code>model:
   type: "ssm"
   d_model: 128
   n_layers: 4
-  ssm_state_dim: 16
-  d_ff: 512          # ~1.0M params (no attention params)</code></pre>
+  ssm_state_dim: 32
+  d_ff: 896          # ~1.0M params (no attention params)</code></pre>
 
     <h4>Pure Attention / Transformer (~1.1M params)</h4>
     <pre><code>model:
@@ -1189,7 +1198,7 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
   n_layers: 4
   n_heads: 4
   n_kv_heads: 4
-  d_ff: 512          # ~1.1M params</code></pre>
+  d_ff: 896          # ~1.1M params</code></pre>
 
     <h3>9.6 — Optimizer tweaks</h3>
     <p>Two small optimizer changes prevent gate collapse without architecture changes:</p>
@@ -1326,4 +1335,3 @@ Queries (124–127):          [6→88] [63→126] [17→127] [1→98]
 </div>
 </body>
 </html>
-
