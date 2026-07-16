@@ -13,7 +13,8 @@ Implements diagonal SSM with input-dependent parameters:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from einops import rearrange, repeat
+from torch.utils.checkpoint import checkpoint
+
 
 
 class SelectiveSSM(nn.Module):
@@ -102,32 +103,39 @@ class SelectiveSSM(nn.Module):
         delta: torch.Tensor,
     ) -> torch.Tensor:
         """
-        SSM recurrence solved analytically using cumulative product/sum.
+        SSM recurrence via cumprod/cumsum with gradient checkpointing.
         
-        h_t = a_t * h_{t-1} + b_t  has closed-form:
-            P_t  = cumprod(a_t)
-            h_t  = P_t * cumsum(b_t / P_t)
-        
-        This is 4 native PyTorch kernels (cumprod, div, cumsum, mul)
-        instead of O(log T) scan steps. No Python loops, no memory blowup.
+        The 4D intermediates (a, b, P, h) are freed after forward and
+        recomputed during backward, avoiding OOM on large [B, T, D, N].
         """
-        batch, seq_len, d_model = x.shape
+        return checkpoint(
+            SelectiveSSM._ssm_cumprod, x, A, B, C, delta,
+            use_reentrant=False, preserve_rng_state=False,
+        )
+    
+    @staticmethod
+    def _ssm_cumprod(
+        x: torch.Tensor,
+        A: torch.Tensor,
+        B: torch.Tensor,
+        C: torch.Tensor,
+        delta: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Vectorized SSM via cumulative product/sum.
+        h_t = a_t * h_{t-1} + b_t → P_t = cumprod(a_t), h_t = P_t * cumsum(b_t / P_t)
+        """
+        _, _, d_model = x.shape
+        state_dim = A.shape[0]
         
-        # a_t = exp(Δ_t * A)  — transition factor  [B, T, D, N]
-        A_4d = repeat(A, 'n -> 1 1 d n', d=d_model)
-        a = torch.exp(delta.unsqueeze(-1) * A_4d)
+        A_4d = A.reshape(1, 1, 1, state_dim).expand(1, 1, d_model, state_dim)
+        a = torch.exp(delta.unsqueeze(-1) * A_4d)          # [B, T, D, N]
+        b = delta.unsqueeze(-1) * B.unsqueeze(2) * x.unsqueeze(-1)  # [B, T, D, N]
         
-        # b_t = Δ_t * B_t * x_t  — input to state  [B, T, D, N]
-        b = delta.unsqueeze(-1) * B.unsqueeze(2) * x.unsqueeze(-1)
+        P = torch.cumprod(a, dim=1)                        # [B, T, D, N]
+        h = P * torch.cumsum(b / P, dim=1)                 # [B, T, D, N]
         
-        # Solve recurrence via prefix transformation (4 kernels total)
-        P = torch.cumprod(a, dim=1)            # P_t = prod_{i=0}^{t} a_i
-        h = P * torch.cumsum(b / P, dim=1)     # h_t = P_t * cumsum(b_i / P_i)
-        
-        # Output: y_t = C_t · h_t
-        y = (C.unsqueeze(2) * h).sum(dim=-1)   # [B, T, D]
-        
-        return y
+        return (C.unsqueeze(2) * h).sum(dim=-1)            # [B, T, D]
 
 
 def test_ssm():

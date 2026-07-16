@@ -1,6 +1,6 @@
 data:
-  num_kv_pairs: 24
-  num_queries: 12
+  num_kv_pairs: 48
+  num_queries: 24
   vocab_size: 256
 model:
   d_ff: 896
@@ -11,7 +11,7 @@ model:
   n_layers: 4
   ssm_state_dim: 32
 training:
-  batch_size: 128
+  batch_size: 64
   device: cuda
   eval_interval: 250
   g_star_filler: 0.05
@@ -20,6 +20,6 @@ training:
   learning_rate: 0.0003
   log_interval: 100
   max_steps: 7000
-  seq_len: 256
+  seq_len: 512
   warmup_steps: 500
   weight_decay: 0.01
