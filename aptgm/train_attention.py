@@ -41,7 +41,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"]["weight_decay"],
     )
-    scaler = GradScaler()
+    scaler = GradScaler(enabled=(device.type == 'cuda'))
     
     pbar = tqdm(range(max_steps), desc="Training")
     for step in pbar:
@@ -57,7 +57,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         labels = labels.to(device)
         
         # Forward with AMP
-        with autocast():
+        with autocast(enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute loss only on query positions

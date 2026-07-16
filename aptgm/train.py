@@ -44,7 +44,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     """Train for one epoch (really just a batch loop)."""
     model.train()
     
-    scaler = GradScaler()
+    scaler = GradScaler(enabled=(device.type == 'cuda'))
     
     losses = []
     accuracies = []
@@ -68,7 +68,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         target_ids = target_ids.to(device)
         
         # Forward with AMP
-        with autocast():
+        with autocast(enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute language modeling loss
@@ -84,7 +84,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
                 all_gates = torch.cat(aux_info['gate_values'], dim=0)
                 mean_gate = all_gates.mean()
                 
-                g_star = config['training']['g_star']
+                g_star = config['training'].get('g_star_filler', config['training'].get('g_star', 0.05))
                 lambda_gate = config['training']['lambda_gate']
                 loss_gate = lambda_gate * (mean_gate - g_star) ** 2
                 

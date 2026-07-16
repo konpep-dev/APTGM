@@ -13,6 +13,21 @@ import argparse
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
+"""
+Phase 4: Train APTGM hybrid model (SSM + Attention + Gate).
+Analyze gate behavior by token type.
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.cuda.amp import autocast, GradScaler
+import yaml
+import json
+import argparse
+import matplotlib.pyplot as plt
+from pathlib import Path
+from tqdm import tqdm
 import numpy as np
 
 from models.model import LMBackbone
@@ -32,7 +47,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         "step": [],
     }
     
-    # Separate gate params (10x lower LR) from rest
+    # Separate gate params (lower LR) from rest
     gate_params = []
     other_params = []
     for name, param in model.named_parameters():
@@ -41,12 +56,13 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         else:
             other_params.append(param)
 
-optimizer = torch.optim.AdamW([
+    gate_lr = config["training"].get("gate_learning_rate", config["training"]["learning_rate"] / 10)
+    optimizer = torch.optim.AdamW([
         {'params': other_params, 'lr': config["training"]["learning_rate"]},
-        {'params': gate_params, 'lr': config["training"]["learning_rate"] / 10},
+        {'params': gate_params, 'lr': gate_lr},
     ], weight_decay=config["training"]["weight_decay"])
     
-    scaler = GradScaler()
+    scaler = GradScaler(enabled=(device.type == 'cuda'))
     
     lambda_gate = config["training"]["lambda_gate"]
     g_star_filler = config["training"].get("g_star_filler", 0.05)
@@ -65,7 +81,7 @@ optimizer = torch.optim.AdamW([
         labels = labels.to(device)
         
         # Forward with AMP
-        with autocast():
+        with autocast(enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute LM loss only on query positions
@@ -122,30 +138,6 @@ optimizer = torch.optim.AdamW([
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(optimizer)
         scaler.update()
-        optimizer.step()
-        
-        # Log
-        if step % log_interval == 0:
-            history["loss"].append(loss_lm.item())
-            history["accuracy"].append(accuracy.item())
-            history["gate_mean"].append(gate_mean.item())
-            history["gate_at_queries"].append(gate_at_queries)
-            history["gate_at_filler"].append(gate_at_filler)
-            history["gate_at_kv"].append(gate_at_kv)
-            history["step"].append(step)
-            
-            pbar.set_postfix({
-                "loss": f"{loss_lm.item():.4f}",
-                "acc": f"{accuracy.item():.2%}",
-                "gate": f"{gate_mean.item():.3f}",
-                "g_query": f"{gate_at_queries:.3f}",
-            })
-    
-    return history
-
-
-def plot_training_curves(history, save_path):
-    """Plot training curves with gate analysis."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
     steps = history["step"]
