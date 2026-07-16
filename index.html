@@ -908,16 +908,7 @@
       \]
     </div>
 
-    <h3>5.3 — Expected behavior</h3>
-    <p>An SSM with diagonal \(A\) (as in Mamba/S4) suffers from <em>memory decay</em> — representations of early key-value pairs fade as the state propagates forward through dozens or hundreds of filler tokens. Attention, by contrast, has direct access to all past positions with no decay.</p>
-    <table>
-      <tr><th>Model</th><th>seq_len=64</th><th>seq_len=512</th><th>Why</th></tr>
-      <tr><td>SSM-only</td><td>~80–90%</td><td>&lt; 50%</td><td>State decay over long filler span</td></tr>
-      <tr><td>Attention-only</td><td>~100%</td><td>~100%</td><td>Direct key-value lookup, no decay</td></tr>
-      <tr><td class="hl">APTGM (ours)</td><td class="hl">~100%</td><td class="hl">~95–100%</td><td class="hl">Gate learns to route queries to attention</td></tr>
-    </table>
-
-    <h3>5.4 — Diagnostic: gate value at query vs. filler positions</h3>
+<h3>5.4 — Diagnostic: gate value at query vs. filler positions</h3>
     <p>The single most important metric for validating the gate's learned behavior is not just the average \(\bar g_t\), but the <em>conditional mean</em> split by token type:</p>
     <div class="eq-block">
       \[
