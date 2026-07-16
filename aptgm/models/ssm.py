@@ -65,62 +65,70 @@ class SelectiveSSM(nn.Module):
         nn.init.xavier_uniform_(self.W_B.weight)
         nn.init.xavier_uniform_(self.W_C.weight)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _scan_chunked(
+        self,
+        x: torch.Tensor,
+        delta: torch.Tensor,
+        A: torch.Tensor,
+        B: torch.Tensor,
+        C: torch.Tensor,
+        chunk_size: int = 64,
+    ) -> torch.Tensor:
         """
-        Optimized high-speed forward pass using flattened 3D operations.
-        x: [batch, seq_len, d_model]
+        Chunked selective scan.
+        Processes the sequence in chunks of chunk_size to keep O(chunk * B * D * N)
+        memory instead of O(T * B * D * N).
+        Only ~1 MB of persistent state (h) is carried between chunks.
         """
         batch, seq_len, d_model = x.shape
-        
-        # Compute A (negative for stability)
+        state_dim = A.shape[0]
+        A_4d = A.view(1, 1, 1, state_dim)  # [1, 1, 1, N]
+
+        # Recurrent state: [B, D, N] — tiny (~1 MB for B=64, D=128, N=32)
+        h = x.new_zeros(batch, d_model, state_dim)
+        outputs = []
+
+        for start in range(0, seq_len, chunk_size):
+            end = min(start + chunk_size, seq_len)
+
+            a_chunk = torch.exp(
+                delta[:, start:end].unsqueeze(-1) * A_4d
+            )                                       # [B, C, D, N]
+            b_chunk = (
+                delta[:, start:end].unsqueeze(-1)
+                * B[:, start:end].unsqueeze(2)
+                * x[:, start:end].unsqueeze(-1)
+            )                                       # [B, C, D, N]
+
+            # Parallel scan within the chunk
+            P = torch.cumprod(a_chunk, dim=1)        # [B, C, D, N]
+            h_chunk = P * h.unsqueeze(1) + P * torch.cumsum(
+                b_chunk / (P + 1e-10), dim=1
+            )                                        # [B, C, D, N]
+
+            # Readout: y = C · h
+            y_chunk = (C[:, start:end].unsqueeze(2) * h_chunk).sum(dim=-1)
+            outputs.append(y_chunk)
+
+            # Carry state to next chunk
+            h = h_chunk[:, -1]  # [B, D, N]
+
+        return torch.cat(outputs, dim=1)  # [B, T, D]
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Selective SSM forward with chunked scan (memory efficient).
+        x: [batch, seq_len, d_model]
+        """
         A = -torch.exp(self.A_log)  # [state_dim]
-        
-        # Compute Δ_t (timescale, per position and channel)
-        delta = F.softplus(self.dt_proj(self.W_delta(x)))  # [batch, seq_len, d_model]
-        
-        # Compute B_t and C_t (input-dependent)
-        B = self.W_B(x)  # [batch, seq_len, state_dim]
-        C = self.W_C(x)  # [batch, seq_len, state_dim]
-        
-        # --- OPTIMIZED PARALLEL SCAN ---
-        # Flatten batch and d_model dimensions to make it 3D [B*D, T, N]
-        # This avoids generating massive 4D matrices and is faster in PyTorch
-        
-        # Reshape delta and x for broadcasting
-        # delta: [B, T, D] -> [B*D, T, 1]
-        delta_flat = delta.transpose(1, 2).reshape(batch * d_model, seq_len, 1)
-        # x: [B, T, D] -> [B*D, T, 1]
-        x_flat = x.transpose(1, 2).reshape(batch * d_model, seq_len, 1)
-        
-        # A: [N] -> [1, 1, N]
-        A_3d = A.view(1, 1, self.state_dim)
-        
-        # Broadcast delta over state_dim: [B*D, T, N]
-        # a_flat = exp(Δ * A)
-        a_flat = torch.exp(delta_flat * A_3d)
-        
-        # B is [B, T, N]. Repeat to match B*D dimension:
-        # B_flat: [B*D, T, N]
-        B_flat = B.repeat_interleave(d_model, dim=0)
-        
-        # b_flat = Δ * B * x
-        b_flat = delta_flat * B_flat * x_flat  # [B*D, T, N]
-        
-        # Efficient Parallel Scan (Cumprod / Cumsum)
-        P = torch.cumprod(a_flat, dim=1)
-        h_flat = P * torch.cumsum(b_flat / (P + 1e-10), dim=1)  # [B*D, T, N]
-        
-        # Reshape h back to [B, D, T, N] then transpose to [B, T, D, N]
-        h = h_flat.view(batch, d_model, seq_len, self.state_dim).transpose(1, 2)
-        
-        # Compute output: y = sum(C * h, dim=-1)
-        # C: [B, T, N] -> [B, T, 1, N]
-        y = (C.unsqueeze(2) * h).sum(dim=-1)  # [B, T, D]
-        
-        # Add skip connection
-        y = y + self.D * x
-        
-        return y
+
+        delta = F.softplus(self.dt_proj(self.W_delta(x)))  # [B, T, D]
+        B = self.W_B(x)  # [B, T, N]
+        C = self.W_C(x)  # [B, T, N]
+
+        y_ssm = self._scan_chunked(x, delta, A, B, C)
+
+        return y_ssm + self.D * x
 
 
 def test_ssm():
