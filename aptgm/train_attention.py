@@ -6,7 +6,7 @@ This establishes the upper bound performance on the task.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+import torch.amp
 import yaml
 import json
 import argparse
@@ -41,7 +41,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"]["weight_decay"],
     )
-    scaler = GradScaler(enabled=(device.type == 'cuda'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
     
     pbar = tqdm(range(max_steps), desc="Training")
     for step in pbar:
@@ -57,7 +57,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         labels = labels.to(device)
         
         # Forward with AMP
-        with autocast(enabled=(device.type == 'cuda')):
+        with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute loss only on query positions

@@ -6,7 +6,7 @@ Analyze gate behavior by token type.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
+import torch.amp
 import yaml
 import json
 import argparse
@@ -47,7 +47,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         {'params': gate_params, 'lr': gate_lr},
     ], weight_decay=config["training"]["weight_decay"])
     
-    scaler = GradScaler(enabled=(device.type == 'cuda'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
     
     lambda_gate = config["training"]["lambda_gate"]
     g_star_filler = config["training"].get("g_star_filler", 0.05)
@@ -66,7 +66,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         labels = labels.to(device)
         
         # Forward with AMP
-        with autocast(enabled=(device.type == 'cuda')):
+        with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute LM loss only on query positions

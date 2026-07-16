@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import LambdaLR
-from torch.cuda.amp import autocast, GradScaler
+import torch.amp
 from tqdm import tqdm
 import numpy as np
 
@@ -44,7 +44,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     """Train for one epoch (really just a batch loop)."""
     model.train()
     
-    scaler = GradScaler(enabled=(device.type == 'cuda'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
     
     losses = []
     accuracies = []
@@ -68,7 +68,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         target_ids = target_ids.to(device)
         
         # Forward with AMP
-        with autocast(enabled=(device.type == 'cuda')):
+        with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
             logits, aux_info = model(input_ids)
             
             # Compute language modeling loss
