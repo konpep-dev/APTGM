@@ -44,7 +44,8 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     """Train for one epoch (really just a batch loop)."""
     model.train()
     
-    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
+    # Lower init_scale to reduce initial gradient overflow
+    scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'), init_scale=2**10)
     
     losses = []
     accuracies = []
@@ -96,9 +97,14 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        
+        # Step optimizer with scaler, only step scheduler if optimizer actually stepped
+        old_scale = scaler.get_scale()
         scaler.step(optimizer)
         scaler.update()
-        scheduler.step()
+        new_scale = scaler.get_scale()
+        if new_scale == old_scale:  # optimizer.step() was NOT skipped
+            scheduler.step()
         
         # Metrics
         acc = compute_accuracy(logits, target_ids)
