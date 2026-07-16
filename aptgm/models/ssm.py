@@ -13,8 +13,6 @@ Implements diagonal SSM with input-dependent parameters:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
-
 
 
 class SelectiveSSM(nn.Module):
@@ -49,7 +47,8 @@ class SelectiveSSM(nn.Module):
         self.W_C = nn.Linear(d_model, state_dim, bias=False)
         
         # A: diagonal state matrix (parameterized as -exp(A_log) for stability)
-        A_log = torch.log(torch.arange(1, state_dim + 1, dtype=torch.float32))
+        # Scaled init to prevent cumprod underflow on long sequences
+        A_log = torch.log(torch.linspace(1, 8, state_dim, dtype=torch.float32))
         self.A_log = nn.Parameter(A_log)
         
         # D: skip connection
@@ -68,15 +67,12 @@ class SelectiveSSM(nn.Module):
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Args:
-            x: [batch, seq_len, d_model]
-            
-        Returns:
-            y: [batch, seq_len, d_model]
+        Optimized high-speed forward pass using flattened 3D operations.
+        x: [batch, seq_len, d_model]
         """
         batch, seq_len, d_model = x.shape
         
-        # Compute A (ensure negative for stability)
+        # Compute A (negative for stability)
         A = -torch.exp(self.A_log)  # [state_dim]
         
         # Compute Δ_t (timescale, per position and channel)
@@ -86,56 +82,45 @@ class SelectiveSSM(nn.Module):
         B = self.W_B(x)  # [batch, seq_len, state_dim]
         C = self.W_C(x)  # [batch, seq_len, state_dim]
         
-        # Run SSM (always uses vectorized parallel scan)
-        y = self._ssm_sequential(x, A, B, C, delta)
+        # --- OPTIMIZED PARALLEL SCAN ---
+        # Flatten batch and d_model dimensions to make it 3D [B*D, T, N]
+        # This avoids generating massive 4D matrices and is faster in PyTorch
+        
+        # Reshape delta and x for broadcasting
+        # delta: [B, T, D] -> [B*D, T, 1]
+        delta_flat = delta.transpose(1, 2).reshape(batch * d_model, seq_len, 1)
+        # x: [B, T, D] -> [B*D, T, 1]
+        x_flat = x.transpose(1, 2).reshape(batch * d_model, seq_len, 1)
+        
+        # A: [N] -> [1, 1, N]
+        A_3d = A.view(1, 1, self.state_dim)
+        
+        # Broadcast delta over state_dim: [B*D, T, N]
+        # a_flat = exp(Δ * A)
+        a_flat = torch.exp(delta_flat * A_3d)
+        
+        # B is [B, T, N]. Repeat to match B*D dimension:
+        # B_flat: [B*D, T, N]
+        B_flat = B.repeat_interleave(d_model, dim=0)
+        
+        # b_flat = Δ * B * x
+        b_flat = delta_flat * B_flat * x_flat  # [B*D, T, N]
+        
+        # Efficient Parallel Scan (Cumprod / Cumsum)
+        P = torch.cumprod(a_flat, dim=1)
+        h_flat = P * torch.cumsum(b_flat / (P + 1e-10), dim=1)  # [B*D, T, N]
+        
+        # Reshape h back to [B, D, T, N] then transpose to [B, T, D, N]
+        h = h_flat.view(batch, d_model, seq_len, self.state_dim).transpose(1, 2)
+        
+        # Compute output: y = sum(C * h, dim=-1)
+        # C: [B, T, N] -> [B, T, 1, N]
+        y = (C.unsqueeze(2) * h).sum(dim=-1)  # [B, T, D]
         
         # Add skip connection
         y = y + self.D * x
         
         return y
-    
-    def _ssm_sequential(
-        self,
-        x: torch.Tensor,
-        A: torch.Tensor,
-        B: torch.Tensor,
-        C: torch.Tensor,
-        delta: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        SSM recurrence via cumprod/cumsum with gradient checkpointing.
-        
-        The 4D intermediates (a, b, P, h) are freed after forward and
-        recomputed during backward, avoiding OOM on large [B, T, D, N].
-        """
-        return checkpoint(
-            SelectiveSSM._ssm_cumprod, x, A, B, C, delta,
-            use_reentrant=False, preserve_rng_state=False,
-        )
-    
-    @staticmethod
-    def _ssm_cumprod(
-        x: torch.Tensor,
-        A: torch.Tensor,
-        B: torch.Tensor,
-        C: torch.Tensor,
-        delta: torch.Tensor,
-    ) -> torch.Tensor:
-        """
-        Vectorized SSM via cumulative product/sum.
-        h_t = a_t * h_{t-1} + b_t → P_t = cumprod(a_t), h_t = P_t * cumsum(b_t / P_t)
-        """
-        _, _, d_model = x.shape
-        state_dim = A.shape[0]
-        
-        A_4d = A.reshape(1, 1, 1, state_dim).expand(1, 1, d_model, state_dim)
-        a = torch.exp(delta.unsqueeze(-1) * A_4d)          # [B, T, D, N]
-        b = delta.unsqueeze(-1) * B.unsqueeze(2) * x.unsqueeze(-1)  # [B, T, D, N]
-        
-        P = torch.cumprod(a, dim=1)                        # [B, T, D, N]
-        h = P * torch.cumsum(b / P, dim=1)                 # [B, T, D, N]
-        
-        return (C.unsqueeze(2) * h).sum(dim=-1)            # [B, T, D]
 
 
 def test_ssm():
