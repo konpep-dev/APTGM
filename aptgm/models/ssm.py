@@ -13,11 +13,12 @@ Implements diagonal SSM with input-dependent parameters:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 
 class SelectiveSSM(nn.Module):
     """Selective SSM with diagonal state matrix."""
-    
+
     def __init__(
         self,
         d_model: int,
@@ -25,108 +26,66 @@ class SelectiveSSM(nn.Module):
         dt_rank: int = None,
         use_fast_path: bool = True,
     ):
-        """
-        Args:
-            d_model: Model dimension
-            state_dim: SSM state dimension (n)
-            dt_rank: Rank for Δ projection (default: d_model // 16)
-            use_fast_path: Use parallel scan if available
-        """
         super().__init__()
         self.d_model = d_model
         self.state_dim = state_dim
         self.dt_rank = dt_rank or max(d_model // 16, 1)
         self.use_fast_path = use_fast_path
-        
-        # Δ parameters (timescale)
+
         self.W_delta = nn.Linear(d_model, self.dt_rank, bias=True)
         self.dt_proj = nn.Linear(self.dt_rank, d_model, bias=True)
-        
-        # B and C projections (input-dependent)
+
         self.W_B = nn.Linear(d_model, state_dim, bias=False)
         self.W_C = nn.Linear(d_model, state_dim, bias=False)
-        
-        # A: diagonal state matrix (parameterized as -exp(A_log) for stability)
-        # Scaled init to prevent cumprod underflow on long sequences
+
         A_log = torch.log(torch.linspace(1, 8, state_dim, dtype=torch.float32))
         self.A_log = nn.Parameter(A_log)
-        
-        # D: skip connection
+
         self.D = nn.Parameter(torch.ones(d_model))
-        
+
         self._init_weights()
-    
+
     def _init_weights(self):
-        """Initialize parameters."""
         nn.init.xavier_uniform_(self.W_delta.weight)
         nn.init.zeros_(self.W_delta.bias)
         nn.init.xavier_uniform_(self.dt_proj.weight, gain=0.1)
-        nn.init.constant_(self.dt_proj.bias, -5.0)  # delta ~ softplus(-5) ≈ 0.007
+        nn.init.constant_(self.dt_proj.bias, -5.0)
         nn.init.xavier_uniform_(self.W_B.weight)
         nn.init.xavier_uniform_(self.W_C.weight)
-    
-    def _scan_chunked(
-        self,
+
+    @staticmethod
+    def _scan_4d(
         x: torch.Tensor,
         delta: torch.Tensor,
         A: torch.Tensor,
         B: torch.Tensor,
         C: torch.Tensor,
-        chunk_size: int = 64,
     ) -> torch.Tensor:
         """
-        Chunked selective scan.
-        Processes the sequence in chunks of chunk_size to keep O(chunk * B * D * N)
-        memory instead of O(T * B * D * N).
-        Only ~1 MB of persistent state (h) is carried between chunks.
+        4D parallel scan with gradient checkpointing.
+        All intermediate 4D tensors are freed when this function returns.
         """
-        batch, seq_len, d_model = x.shape
+        _, _, d_model = x.shape
         state_dim = A.shape[0]
-        A_4d = A.view(1, 1, 1, state_dim)  # [1, 1, 1, N]
 
-        # Recurrent state: [B, D, N] — tiny (~1 MB for B=64, D=128, N=32)
-        h = x.new_zeros(batch, d_model, state_dim)
-        outputs = []
+        a = torch.exp(delta.unsqueeze(-1) * A.view(1, 1, 1, state_dim))
+        b = delta.unsqueeze(-1) * B.unsqueeze(2) * x.unsqueeze(-1)
 
-        for start in range(0, seq_len, chunk_size):
-            end = min(start + chunk_size, seq_len)
+        P = torch.cumprod(a, dim=1)
+        h = P * torch.cumsum(b / (P + 1e-10), dim=1)
 
-            a_chunk = torch.exp(
-                delta[:, start:end].unsqueeze(-1) * A_4d
-            )                                       # [B, C, D, N]
-            b_chunk = (
-                delta[:, start:end].unsqueeze(-1)
-                * B[:, start:end].unsqueeze(2)
-                * x[:, start:end].unsqueeze(-1)
-            )                                       # [B, C, D, N]
-
-            # Parallel scan within the chunk
-            P = torch.cumprod(a_chunk, dim=1)        # [B, C, D, N]
-            h_chunk = P * h.unsqueeze(1) + P * torch.cumsum(
-                b_chunk / (P + 1e-10), dim=1
-            )                                        # [B, C, D, N]
-
-            # Readout: y = C · h
-            y_chunk = (C[:, start:end].unsqueeze(2) * h_chunk).sum(dim=-1)
-            outputs.append(y_chunk)
-
-            # Carry state to next chunk
-            h = h_chunk[:, -1]  # [B, D, N]
-
-        return torch.cat(outputs, dim=1)  # [B, T, D]
+        return (C.unsqueeze(2) * h).sum(dim=-1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Selective SSM forward with chunked scan (memory efficient).
-        x: [batch, seq_len, d_model]
-        """
-        A = -torch.exp(self.A_log)  # [state_dim]
+        A = -torch.exp(self.A_log)
+        delta = F.softplus(self.dt_proj(self.W_delta(x)))
+        B = self.W_B(x)
+        C = self.W_C(x)
 
-        delta = F.softplus(self.dt_proj(self.W_delta(x)))  # [B, T, D]
-        B = self.W_B(x)  # [B, T, N]
-        C = self.W_C(x)  # [B, T, N]
-
-        y_ssm = self._scan_chunked(x, delta, A, B, C)
+        y_ssm = checkpoint(
+            SelectiveSSM._scan_4d, x, delta, A, B, C,
+            use_reentrant=False, preserve_rng_state=False,
+        )
 
         return y_ssm + self.D * x
 
