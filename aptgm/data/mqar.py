@@ -7,9 +7,9 @@ Target is -100 (ignore) everywhere except at query positions.
 """
 
 import torch
-import numpy as np
 
 
+@torch.no_grad()
 def generate_mqar_batch(
     batch_size: int,
     seq_len: int,
@@ -17,9 +17,11 @@ def generate_mqar_batch(
     num_kv_pairs: int,
     num_queries: int,
     seed: int | None = None,
+    device: torch.device | str = "cpu",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Generate MQAR batch.
+    Generate MQAR batch directly on target device (GPU if available).
+    Fully vectorized — zero Python loops over batch elements.
     
     Args:
         batch_size: Number of sequences
@@ -28,15 +30,18 @@ def generate_mqar_batch(
         num_kv_pairs: Number of key-value pairs to generate
         num_queries: Number of queries (must be <= num_kv_pairs)
         seed: Random seed for reproducibility
+        device: Target device ("cpu", "cuda", etc.)
         
     Returns:
         (input_ids, target_ids), both [batch_size, seq_len]
         target_ids is -100 everywhere except at query positions
     """
+    device = torch.device(device)
+    
+    # Set up generator for reproducibility
+    gen = torch.Generator(device=device)
     if seed is not None:
-        rng = np.random.RandomState(seed)
-    else:
-        rng = np.random.RandomState()
+        gen.manual_seed(seed)
     
     assert num_queries <= num_kv_pairs, "Cannot query more keys than provided"
     
@@ -53,59 +58,64 @@ def generate_mqar_batch(
     filler_vocab_end = vocab_size - 1
     
     # Check we have enough space
-    assert key_vocab_end - key_vocab_start >= num_kv_pairs, "Not enough keys in vocab"
-    assert value_vocab_end - value_vocab_start >= num_kv_pairs, "Not enough values in vocab"
+    n_keys_avail = key_vocab_end - key_vocab_start + 1
+    n_vals_avail = value_vocab_end - value_vocab_start + 1
+    assert n_keys_avail >= num_kv_pairs, "Not enough keys in vocab"
+    assert n_vals_avail >= num_kv_pairs, "Not enough values in vocab"
     
     # Calculate layout
-    kv_block_len = 2 * num_kv_pairs  # k1 v1 k2 v2 ...
-    query_block_len = num_queries
-    min_seq_len = kv_block_len + query_block_len + 1  # +1 for at least some filler
+    kv_block_len = 2 * num_kv_pairs
+    min_seq_len = kv_block_len + num_queries + 1
     assert seq_len >= min_seq_len, f"seq_len {seq_len} too short for {num_kv_pairs} pairs + {num_queries} queries"
     
-    filler_len = seq_len - kv_block_len - query_block_len
+    filler_len = seq_len - kv_block_len - num_queries
     
-    input_ids = torch.zeros(batch_size, seq_len, dtype=torch.long)
-    target_ids = torch.full((batch_size, seq_len), -100, dtype=torch.long)
+    # ---- Generate all random data on target device ---- #
     
-    for b in range(batch_size):
-        # Generate unique keys and values for this sequence
-        keys = rng.choice(
-            range(key_vocab_start, key_vocab_end + 1),
-            size=num_kv_pairs,
-            replace=False
-        )
-        values = rng.choice(
-            range(value_vocab_start, value_vocab_end + 1),
-            size=num_kv_pairs,
-            replace=False
-        )
-        
-        # Build kv pairs
-        pos = 0
-        kv_dict = {}
-        for i in range(num_kv_pairs):
-            input_ids[b, pos] = keys[i]
-            input_ids[b, pos + 1] = values[i]
-            kv_dict[int(keys[i])] = int(values[i])
-            pos += 2
-        
-        # Add filler tokens (random distractors, never valid keys or values)
-        for _ in range(filler_len):
-            # Pick random filler token from reserved filler range
-            filler_token = rng.randint(filler_vocab_start, filler_vocab_end + 1)
-            input_ids[b, pos] = filler_token
-            pos += 1
-        
-        # Add queries - the query KEYS appear in the input
-        query_indices = rng.choice(num_kv_pairs, size=num_queries, replace=False)
-        for i in query_indices:
-            query_key = keys[i]
-            input_ids[b, pos] = query_key
-            # Target is the value for this key
-            target_ids[b, pos] = kv_dict[int(query_key)]
-            pos += 1
+    # Unique keys per sequence: argsort of random values gives permutation indices
+    key_perm = torch.rand(batch_size, n_keys_avail, device=device, generator=gen)
+    key_offsets = key_perm.argsort(dim=-1)[:, :num_kv_pairs]  # (B, num_kv_pairs), unique per row
+    keys = key_vocab_start + key_offsets
     
-    return input_ids, target_ids
+    # Unique values per sequence
+    val_perm = torch.rand(batch_size, n_vals_avail, device=device, generator=gen)
+    val_offsets = val_perm.argsort(dim=-1)[:, :num_kv_pairs]
+    values = value_vocab_start + val_offsets
+    
+    # Filler tokens (no uniqueness needed)
+    filler = torch.randint(
+        filler_vocab_start, filler_vocab_end + 1,
+        (batch_size, filler_len), device=device, generator=gen,
+    )
+    
+    # Which KV pairs to query (unique per sequence)
+    q_perm = torch.rand(batch_size, num_kv_pairs, device=device, generator=gen)
+    q_indices = q_perm.argsort(dim=-1)[:, :num_queries]  # (B, num_queries)
+    
+    # ---- Build input_ids and targets ---- #
+    
+    input_ids = torch.zeros(batch_size, seq_len, dtype=torch.long, device=device)
+    targets = torch.full((batch_size, seq_len), -100, dtype=torch.long, device=device)
+    
+    # KV pairs at positions 0, 2, 4, ...
+    kv_pos = torch.arange(0, kv_block_len, 2, device=device)
+    input_ids[:, kv_pos] = keys
+    input_ids[:, kv_pos + 1] = values
+    
+    # Filler block
+    fill_start = kv_block_len
+    input_ids[:, fill_start:fill_start + filler_len] = filler
+    
+    # Query block — gather which keys to query and their corresponding values
+    q_start = kv_block_len + filler_len
+    q_keys = torch.gather(keys, 1, q_indices)       # (B, num_queries)
+    q_vals = torch.gather(values, 1, q_indices)      # (B, num_queries)
+    
+    q_pos = q_start + torch.arange(num_queries, device=device)
+    input_ids[:, q_pos] = q_keys
+    targets[:, q_pos] = q_vals
+    
+    return input_ids, targets
 
 
 class MQARBuffer:
@@ -145,10 +155,10 @@ class MQARBuffer:
             num_kv_pairs=num_kv_pairs,
             num_queries=num_queries,
             seed=seed,
+            device=self.device,
         )
-        # Move entire pool to GPU once
-        self.inp = inp.to(self.device)
-        self.tgt = tgt.to(self.device)
+        self.inp = inp
+        self.tgt = tgt
         self.pool_size = pool_size
         print(
             f"[MQARBuffer] Pool ready on {self.device}. "
