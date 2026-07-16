@@ -16,7 +16,7 @@ from tqdm import tqdm
 import numpy as np
 
 from models.model import LMBackbone
-from data.mqar import generate_mqar_batch
+from data.mqar import generate_mqar_batch, MQARBuffer
 
 
 def train_steps(model, config, device, max_steps, log_interval=10):
@@ -51,19 +51,22 @@ def train_steps(model, config, device, max_steps, log_interval=10):
     
     lambda_gate = config["training"]["lambda_gate"]
     g_star_filler = config["training"].get("g_star_filler", 0.05)
+
+    # Pre-generate all data once on GPU — eliminates CPU bottleneck
+    buf = MQARBuffer(
+        pool_size=8192,
+        batch_size=config["training"]["batch_size"],
+        seq_len=config["training"]["seq_len"],
+        vocab_size=config["data"]["vocab_size"],
+        num_kv_pairs=config["data"]["num_kv_pairs"],
+        num_queries=config["data"]["num_queries"],
+        device=device,
+    )
     
     pbar = tqdm(range(max_steps), desc="Training APTGM")
     for step in pbar:
-        # Generate batch
-        input_ids, labels = generate_mqar_batch(
-            batch_size=config["training"]["batch_size"],
-            seq_len=config["training"]["seq_len"],
-            vocab_size=config["data"]["vocab_size"],
-            num_kv_pairs=config["data"]["num_kv_pairs"],
-            num_queries=config["data"]["num_queries"],
-        )
-        input_ids = input_ids.to(device)
-        labels = labels.to(device)
+        # GPU-side O(1) batch sample — no CPU work per step
+        input_ids, labels = buf.sample()
         
         # Forward with AMP
         with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):

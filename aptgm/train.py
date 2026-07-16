@@ -11,7 +11,7 @@ import torch.amp
 from tqdm import tqdm
 import numpy as np
 
-from data.mqar import generate_mqar_batch
+from data.mqar import generate_mqar_batch, MQARBuffer
 from models.model import LMBackbone
 
 
@@ -50,22 +50,23 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     accuracies = []
     gate_means = []
     history = {"loss": [], "accuracy": [], "step": [], "gate_at_queries": [], "gate_at_filler": []}
+
+    # Pre-generate all data once on GPU — eliminates CPU bottleneck
+    buf = MQARBuffer(
+        pool_size=8192,
+        batch_size=config['training']['batch_size'],
+        seq_len=config['training']['seq_len'],
+        vocab_size=config['data']['vocab_size'],
+        num_kv_pairs=config['data']['num_kv_pairs'],
+        num_queries=config['data']['num_queries'],
+        device=device,
+    )
     
     pbar = tqdm(range(config['training']['max_steps']), desc="Training")
     
     for step in pbar:
-        # Generate batch
-        input_ids, target_ids = generate_mqar_batch(
-            batch_size=config['training']['batch_size'],
-            seq_len=config['training']['seq_len'],
-            vocab_size=config['data']['vocab_size'],
-            num_kv_pairs=config['data']['num_kv_pairs'],
-            num_queries=config['data']['num_queries'],
-            seed=None,  # Random each time
-        )
-        
-        input_ids = input_ids.to(device)
-        target_ids = target_ids.to(device)
+        # GPU-side O(1) batch sample — no CPU work per step
+        input_ids, target_ids = buf.sample()
         
         # Forward with AMP
         with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):

@@ -108,6 +108,60 @@ def generate_mqar_batch(
     return input_ids, target_ids
 
 
+class MQARBuffer:
+    """
+    Pre-generates a large pool of MQAR sequences once at startup and stores
+    them on the target device. During training, each call to `.sample()` does
+    a single GPU random-index operation — zero CPU Python work per step.
+
+    Usage:
+        buf = MQARBuffer(pool_size=4096, batch_size=256, **mqar_kwargs, device=device)
+        for step in range(max_steps):
+            input_ids, target_ids = buf.sample()  # instant, GPU-side
+    """
+
+    def __init__(
+        self,
+        pool_size: int,
+        batch_size: int,
+        seq_len: int,
+        vocab_size: int,
+        num_kv_pairs: int,
+        num_queries: int,
+        device: "torch.device | str" = "cpu",
+        seed: int | None = None,
+    ):
+        self.batch_size = batch_size
+        self.device = torch.device(device)
+
+        print(
+            f"[MQARBuffer] Pre-generating {pool_size} sequences "
+            f"(seq_len={seq_len}) — this takes a few seconds..."
+        )
+        inp, tgt = generate_mqar_batch(
+            batch_size=pool_size,
+            seq_len=seq_len,
+            vocab_size=vocab_size,
+            num_kv_pairs=num_kv_pairs,
+            num_queries=num_queries,
+            seed=seed,
+        )
+        # Move entire pool to GPU once
+        self.inp = inp.to(self.device)
+        self.tgt = tgt.to(self.device)
+        self.pool_size = pool_size
+        print(
+            f"[MQARBuffer] Pool ready on {self.device}. "
+            f"VRAM used: ~{self.inp.element_size() * self.inp.nelement() * 2 / 1e6:.1f} MB"
+        )
+
+    @torch.no_grad()
+    def sample(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return a random batch — GPU-only, O(1) per step."""
+        idx = torch.randint(0, self.pool_size, (self.batch_size,), device=self.device)
+        return self.inp[idx], self.tgt[idx]
+
+
 def decode_sequence(input_ids: torch.Tensor, target_ids: torch.Tensor, idx: int = 0) -> str:
     """
     Decode a single sequence for human inspection.
