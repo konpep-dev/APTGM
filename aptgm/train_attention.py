@@ -16,7 +16,7 @@ from tqdm import tqdm
 import numpy as np
 
 from models.model import LMBackbone
-from data.mqar import generate_mqar_batch, MQARBuffer
+from data.mqar import generate_mqar_batch
 
 
 def cosine_schedule(step, max_steps, warmup_steps, max_lr, min_lr=0.0):
@@ -43,21 +43,19 @@ def train_steps(model, config, device, max_steps, log_interval=10):
     )
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
 
-    # Pre-generate all data once on GPU — eliminates CPU bottleneck
-    buf = MQARBuffer(
-        pool_size=8192,
-        batch_size=config["training"]["batch_size"],
-        seq_len=config["training"]["seq_len"],
-        vocab_size=config["data"]["vocab_size"],
-        num_kv_pairs=config["data"]["num_kv_pairs"],
-        num_queries=config["data"]["num_queries"],
-        device=device,
-    )
-    
     pbar = tqdm(range(max_steps), desc="Training")
     for step in pbar:
-        # GPU-side O(1) batch sample — no CPU work per step
-        input_ids, labels = buf.sample()
+        # On-the-fly data generation — fresh random batch each step
+        input_ids, labels = generate_mqar_batch(
+            batch_size=config["training"]["batch_size"],
+            seq_len=config["training"]["seq_len"],
+            vocab_size=config["data"]["vocab_size"],
+            num_kv_pairs=config["data"]["num_kv_pairs"],
+            num_queries=config["data"]["num_queries"],
+            seed=None,
+        )
+        input_ids = input_ids.to(device)
+        labels = labels.to(device)
         
         # Forward with AMP
         with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
