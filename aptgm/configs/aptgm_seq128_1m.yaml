@@ -3,13 +3,13 @@ data:
   num_queries: 24
   vocab_size: 256
 model:
-  d_ff: 896
+  d_ff: 1024
   d_model: 128
   dropout: 0.1
   n_heads: 4
   n_kv_heads: 4
   n_layers: 4
-  ssm_state_dim: 32
+  ssm_state_dim: 16
 training:
   batch_size: 64
   device: cuda
@@ -20,6 +20,6 @@ training:
   learning_rate: 0.0003
   log_interval: 100
   max_steps: 7000
-  seq_len: 512
+  seq_len: 256
   warmup_steps: 500
   weight_decay: 0.01
