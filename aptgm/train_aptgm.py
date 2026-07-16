@@ -13,21 +13,6 @@ import argparse
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
-"""
-Phase 4: Train APTGM hybrid model (SSM + Attention + Gate).
-Analyze gate behavior by token type.
-"""
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.cuda.amp import autocast, GradScaler
-import yaml
-import json
-import argparse
-import matplotlib.pyplot as plt
-from pathlib import Path
-from tqdm import tqdm
 import numpy as np
 
 from models.model import LMBackbone
@@ -116,7 +101,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         preds = logits.argmax(dim=-1)
         correct = (preds[mask] == labels[mask]).float().sum()
         total = mask.sum()
-        accuracy = correct / total if total > 0 else 0.0
+        accuracy = correct.item() / total.item() if total > 0 else 0.0
         
         # Analyze gate by token type (using last layer's gates)
         if len(aux_info["gate_values"]) > 0:
@@ -138,8 +123,30 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         scaler.step(optimizer)
         scaler.update()
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        
+        # --- Save to history ---
+        if step % log_interval == 0 or step == max_steps - 1:
+            history["loss"].append(loss.item())
+            history["accuracy"].append(accuracy)
+            history["gate_mean"].append(gate_mean.item() if isinstance(gate_mean, torch.Tensor) else gate_mean)
+            history["gate_at_queries"].append(gate_at_queries)
+            history["gate_at_filler"].append(gate_at_filler)
+            history["gate_at_kv"].append(gate_at_kv)
+            history["step"].append(step)
+            
+            pbar.set_postfix({
+                "loss": f"{loss.item():.4f}",
+                "acc": f"{accuracy:.2%}",
+                "g_q": f"{gate_at_queries:.3f}",
+                "g_f": f"{gate_at_filler:.3f}"
+            })
     
+    return history
+
+
+def plot_training_curves(history, save_path):
+    """Plot and save training diagnostics."""
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     steps = history["step"]
     
     # Loss
@@ -185,7 +192,6 @@ def train_steps(model, config, device, max_steps, log_interval=10):
 
 def save_report(config, history, param_count, save_path):
     """Save APTGM training report with gate analysis."""
-    
     losses = history["loss"]
     accuracies = history["accuracy"]
     gate_means = history["gate_mean"]
@@ -310,9 +316,7 @@ def save_report(config, history, param_count, save_path):
 ---
 
 *Generated for Phase 4: APTGM Hybrid Training*
-
 """
-    
     with open(save_path, "w", encoding="utf-8") as f:
         f.write(report)
 
@@ -339,17 +343,17 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create APTGM hybrid model
-    model = LMBackbone(
-        vocab_size=config["data"]["vocab_size"],
-        d_model=config["model"]["d_model"],
-        n_layers=config["model"]["n_layers"],
-        block_type="aptgm",  # HYBRID MODEL
-        ssm_state_dim=config["model"]["ssm_state_dim"],
-        n_heads=config["model"]["n_heads"],
-        n_kv_heads=config["model"]["n_kv_heads"],
-        d_ff=config["model"]["d_ff"],
-        dropout=config["model"]["dropout"],
-    ).to(device)
+    model_kwargs = {
+        'vocab_size': config["data"]["vocab_size"],
+        'd_model': config["model"]["d_model"],
+        'n_layers': config["model"]["n_layers"],
+        'block_type': "aptgm",
+    }
+    for key in ['ssm_state_dim', 'n_heads', 'n_kv_heads', 'd_ff', 'dropout']:
+        if key in config['model']:
+            model_kwargs[key] = config['model'][key]
+
+    model = LMBackbone(**model_kwargs).to(device)
     
     param_count = model.count_parameters()
     print(f"Model parameters: {param_count:,}")

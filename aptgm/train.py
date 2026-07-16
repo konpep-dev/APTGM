@@ -214,17 +214,18 @@ def main():
     print(f"Using device: {device}")
     
     # Create model
-    model = LMBackbone(
-        vocab_size=config['data']['vocab_size'],
-        d_model=config['model']['d_model'],
-        n_layers=config['model']['n_layers'],
-        block_type=args.model_type,
-        ssm_state_dim=config['model']['ssm_state_dim'],
-        n_heads=config['model']['n_heads'],
-        n_kv_heads=config['model']['n_kv_heads'],
-        d_ff=config['model']['d_ff'],
-        dropout=config['model']['dropout'],
-    ).to(device)
+    model_kwargs = {
+        'vocab_size': config['data']['vocab_size'],
+        'd_model': config['model']['d_model'],
+        'n_layers': config['model']['n_layers'],
+        'block_type': args.model_type,
+    }
+    # Safely load optional hyperparameters if they exist in config
+    for key in ['ssm_state_dim', 'n_heads', 'n_kv_heads', 'd_ff', 'dropout']:
+        if key in config['model']:
+            model_kwargs[key] = config['model'][key]
+
+    model = LMBackbone(**model_kwargs).to(device)
     
     print(f"\nModel: {args.model_type}")
     print(f"Parameters: {model.count_parameters():,}")
