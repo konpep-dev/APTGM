@@ -15,8 +15,8 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
-from aptgm.data.mqar import generate_mqar_batch
-from aptgm.models.model import LMBackbone
+from data.mqar import generate_mqar_batch
+from models.model import LMBackbone
 
 
 def get_linear_warmup_cosine_decay_scheduler(optimizer, warmup_steps, max_steps):
