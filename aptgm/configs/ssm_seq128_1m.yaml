@@ -1,7 +1,7 @@
 data:
   num_kv_pairs: 64
   num_queries: 64
-  vocab_size: 1024
+  vocab_size: 256
 model:
   d_ff: 1024
   d_model: 128
@@ -17,6 +17,6 @@ training:
   learning_rate: 0.0003
   log_interval: 100
   max_steps: 5000
-  seq_len: 512
+  seq_len: 256
   warmup_steps: 500
   weight_decay: 0.01
