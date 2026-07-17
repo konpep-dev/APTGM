@@ -1,12 +1,16 @@
 """
-MQAR (Multi-Query Associative Recall) data generator.
+MQAR (Multi-Query Associative Recall) — exact Zoology implementation.
 
-Generates sequences of key-value pairs followed by queries:
-    k1 v1 k2 v2 ... kn vn ... filler ... q1 q2 ...
-Target is -100 (ignore) everywhere except at query positions.
+Generates sequences following Arora, Eyuboglu et al. (Zoology, 2023):
+    k1 v1 k2 v2 ... kn vn ... <random tokens with scattered query keys> ...
+
+The query keys are placed at power-law-distributed positions in the continuation,
+matching real language's tendency for recalls to cluster near the mention.
+Non-query positions in the continuation are filled with random tokens.
 """
 
 import torch
+import numpy as np
 
 
 @torch.no_grad()
@@ -18,11 +22,12 @@ def generate_mqar_batch(
     num_queries: int,
     seed: int | None = None,
     device: torch.device | str = "cpu",
+    power_a: float = 0.01,
+    random_non_queries: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
-    Generate MQAR batch directly on target device (GPU if available).
-    Fully vectorized — zero Python loops over batch elements.
-    
+    Generate MQAR batch (Zoology-style) with power-law query gaps.
+
     Args:
         batch_size: Number of sequences
         seq_len: Total sequence length
@@ -30,92 +35,94 @@ def generate_mqar_batch(
         num_kv_pairs: Number of key-value pairs to generate
         num_queries: Number of queries (must be <= num_kv_pairs)
         seed: Random seed for reproducibility
-        device: Target device ("cpu", "cuda", etc.)
-        
+        device: Target device
+        power_a: Power-law exponent for query gaps (0.01 = Zipfian-like)
+        random_non_queries: Replace remaining positions with random tokens
+
     Returns:
         (input_ids, target_ids), both [batch_size, seq_len]
         target_ids is -100 everywhere except at query positions
     """
     device = torch.device(device)
-    
-    # Set up generator for reproducibility
-    gen = torch.Generator(device=device)
     if seed is not None:
-        gen.manual_seed(seed)
-    
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+
+    assert seq_len % 2 == 0, "seq_len must be even"
+    assert num_kv_pairs * 4 <= seq_len, "num_kv_pairs * 4 must be <= seq_len"
     assert num_queries <= num_kv_pairs, "Cannot query more keys than provided"
+
+    context_size = num_kv_pairs * 2
+
+    # Keys from [1, vocab//2), values from [vocab//2, vocab-1]
+    key_vocab_size = vocab_size // 2
+    key_choices = torch.arange(1, key_vocab_size, device=device)
+    value_choices = torch.arange(key_vocab_size, vocab_size, device=device)
+
+    # Sample unique keys per sequence
+    key_perm = torch.rand(batch_size, key_choices.size(0), device=device)
+    key_idx = key_perm.argsort(dim=-1)[:, :num_kv_pairs]
+    keys = key_choices[key_idx]
+
+    # Sample unique values per sequence
+    val_perm = torch.rand(batch_size, value_choices.size(0), device=device)
+    val_idx = val_perm.argsort(dim=-1)[:, :num_kv_pairs]
+    values = value_choices[val_idx]
+
+    # Build KV block: [k1, v1, k2, v2, ...]
+    kvs = torch.zeros(batch_size, context_size, dtype=torch.long, device=device)
+    kvs[:, 0::2] = keys
+    kvs[:, 1::2] = values
+
+    # Power-law gap distribution for query positions
+    space = (seq_len - context_size) // 2
+    p_np = power_a * np.arange(1, space + 1) ** (power_a - 1)
+    p_np = p_np / p_np.sum()
+
+    # Sample gaps per sequence (numpy on CPU, then transfer to device)
+    gaps_np = np.stack([
+        np.random.choice(space, size=num_kv_pairs, replace=False, p=p_np)
+        for _ in range(batch_size)
+    ], axis=0)  # (B, num_kv)
+    gaps = torch.from_numpy(gaps_np).to(device=device)  # (B, num_kv)
+
+    # Build continuation: zeros with query keys at gap positions
+    cont_len = seq_len - context_size + 1  # +1 for causal shift
+    continuation = torch.zeros(batch_size, cont_len, dtype=torch.long, device=device)
+    q_pos_in_cont = gaps * 2  # positions within continuation
+
+    # Which keys to use as queries
+    q_indices = torch.argsort(torch.rand(batch_size, num_kv_pairs, device=device), dim=-1)[:, :num_queries]
+
+    # Place query keys at their positions (fully vectorized)
+    q_keys = torch.gather(keys, 1, q_indices)        # (B, num_queries)
+    q_pos = q_pos_in_cont.gather(1, q_indices).long()  # (B, num_queries) — positions within continuation
+    continuation.scatter_(1, q_pos, q_keys)
+
+    # Assemble full sequence (examples)
+    examples = torch.cat([kvs, continuation], dim=1)  # (B, seq_len + 1)
+    input_ids = examples[:, :-1]  # (B, seq_len)
+
+    # Build targets: value at position AFTER each query key (fully vectorized)
+    q_vals = torch.gather(values, 1, q_indices)       # (B, num_queries)
+    label_pos = (q_pos + context_size + 1).long()      # position in full sequence
     
-    # Reserve token ranges:
-    # 0: special token (not used)
-    # 1 to vocab_size//3: keys
-    # vocab_size//3+1 to 2*vocab_size//3: values
-    # 1 to vocab_size-1: filler (SAME range as keys + values — no easy "ignore" signal)
-    key_vocab_start = 1
-    key_vocab_end = vocab_size // 3
-    value_vocab_start = vocab_size // 3 + 1
-    value_vocab_end = 2 * vocab_size // 3
-    filler_vocab_start = 1
-    filler_vocab_end = vocab_size - 1
-    
-    # Check we have enough space
-    n_keys_avail = key_vocab_end - key_vocab_start + 1
-    n_vals_avail = value_vocab_end - value_vocab_start + 1
-    assert n_keys_avail >= num_kv_pairs, "Not enough keys in vocab"
-    assert n_vals_avail >= num_kv_pairs, "Not enough values in vocab"
-    
-    # Calculate layout
-    kv_block_len = 2 * num_kv_pairs
-    min_seq_len = kv_block_len + num_queries + 1
-    assert seq_len >= min_seq_len, f"seq_len {seq_len} too short for {num_kv_pairs} pairs + {num_queries} queries"
-    
-    filler_len = seq_len - kv_block_len - num_queries
-    
-    # ---- Generate all random data on target device ---- #
-    
-    # Unique keys per sequence: argsort of random values gives permutation indices
-    key_perm = torch.rand(batch_size, n_keys_avail, device=device, generator=gen)
-    key_offsets = key_perm.argsort(dim=-1)[:, :num_kv_pairs]  # (B, num_kv_pairs), unique per row
-    keys = key_vocab_start + key_offsets
-    
-    # Unique values per sequence
-    val_perm = torch.rand(batch_size, n_vals_avail, device=device, generator=gen)
-    val_offsets = val_perm.argsort(dim=-1)[:, :num_kv_pairs]
-    values = value_vocab_start + val_offsets
-    
-    # Filler tokens: explicitly drawn from this sequence's keys and values
-    # (max confusion — every filler token looks like a real KV token)
-    filler_source = torch.cat([keys, values], dim=-1)  # (B, 2*num_kv_pairs)
-    filler_indices = torch.randint(0, 2 * num_kv_pairs, (batch_size, filler_len),
-                                   device=device, generator=gen)
-    filler = torch.gather(filler_source, 1, filler_indices)
-    
-    # Which KV pairs to query (unique per sequence)
-    q_perm = torch.rand(batch_size, num_kv_pairs, device=device, generator=gen)
-    q_indices = q_perm.argsort(dim=-1)[:, :num_queries]  # (B, num_queries)
-    
-    # ---- Build input_ids and targets ---- #
-    
-    input_ids = torch.zeros(batch_size, seq_len, dtype=torch.long, device=device)
-    targets = torch.full((batch_size, seq_len), -100, dtype=torch.long, device=device)
-    
-    # KV pairs at positions 0, 2, 4, ...
-    kv_pos = torch.arange(0, kv_block_len, 2, device=device)
-    input_ids[:, kv_pos] = keys
-    input_ids[:, kv_pos + 1] = values
-    
-    # Filler block
-    fill_start = kv_block_len
-    input_ids[:, fill_start:fill_start + filler_len] = filler
-    
-    # Query block — gather which keys to query and their corresponding values
-    q_start = kv_block_len + filler_len
-    q_keys = torch.gather(keys, 1, q_indices)       # (B, num_queries)
-    q_vals = torch.gather(values, 1, q_indices)      # (B, num_queries)
-    
-    q_pos = q_start + torch.arange(num_queries, device=device)
-    input_ids[:, q_pos] = q_keys
-    targets[:, q_pos] = q_vals
-    
+    targets = torch.full((batch_size, seq_len + 1), -100, dtype=torch.long, device=device)
+    # Only write valid positions to avoid index errors
+    valid_mask = (label_pos >= 0) & (label_pos < seq_len + 1)
+    for b in range(batch_size):
+        valid_idx = valid_mask[b].nonzero(as_tuple=True)[0]
+        if valid_idx.numel() > 0:
+            targets[b, label_pos[b, valid_idx]] = q_vals[b, valid_idx]
+    targets = targets[:, 1:]  # shift for causal LM
+
+    # Fill non-query positions with random tokens from full vocab
+    if random_non_queries:
+        mask = input_ids == 0
+        # Use PyTorch randint for GPU randomness
+        rand_vals = torch.randint(1, vocab_size, input_ids.shape, device=device)
+        input_ids[mask] = rand_vals[mask]
+
     return input_ids, targets
 
 
