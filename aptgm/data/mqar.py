@@ -82,11 +82,12 @@ def generate_mqar_batch(
     val_offsets = val_perm.argsort(dim=-1)[:, :num_kv_pairs]
     values = value_vocab_start + val_offsets
     
-    # Filler tokens (no uniqueness needed)
-    filler = torch.randint(
-        filler_vocab_start, filler_vocab_end + 1,
-        (batch_size, filler_len), device=device, generator=gen,
-    )
+    # Filler tokens: explicitly drawn from this sequence's keys and values
+    # (max confusion — every filler token looks like a real KV token)
+    filler_source = torch.cat([keys, values], dim=-1)  # (B, 2*num_kv_pairs)
+    filler_indices = torch.randint(0, 2 * num_kv_pairs, (batch_size, filler_len),
+                                   device=device, generator=gen)
+    filler = torch.gather(filler_source, 1, filler_indices)
     
     # Which KV pairs to query (unique per sequence)
     q_perm = torch.rand(batch_size, num_kv_pairs, device=device, generator=gen)
