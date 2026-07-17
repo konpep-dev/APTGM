@@ -48,6 +48,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'), init_scale=2**10)
     
     losses = []
+    train_accs = []
     gate_means = []
     history = {"loss": [], "accuracy": [], "step": []}
 
@@ -108,19 +109,23 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         if new_scale == old_scale:
             scheduler.step()
         
-        # Track training loss (not accuracy — training accuracy is misleading)
+        # Track training loss and accuracy (accuracy for progress bar only)
+        train_acc = compute_accuracy(logits, target_ids)
         losses.append(loss_lm.item())
+        train_accs.append(train_acc)
         
-        # Logging
+        # Logging — show training accuracy for instant feedback
         if step % config['training']['log_interval'] == 0:
             avg_loss = np.mean(losses[-100:]) if losses else 0.0
+            avg_acc = np.mean(train_accs[-100:]) if train_accs else 0.0
             avg_gate = np.mean(gate_means[-100:]) if gate_means else 0.0
             pbar.set_postfix({
                 'loss': f'{avg_loss:.4f}',
+                'acc': f'{avg_acc:.2%}',
                 'lr': f'{scheduler.get_last_lr()[0]:.2e}',
             })
         
-        # Periodic EVALUATION on fresh data (this is the real metric)
+        # Periodic EVALUATION on fresh data (this goes to history)
         if step % config['training']['eval_interval'] == 0:
             eval_stats = evaluate(model, config, device, num_batches=20)
             history["loss"].append(eval_stats['loss'])
