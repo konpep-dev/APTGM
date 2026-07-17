@@ -49,12 +49,12 @@ def generate_mqar_batch(
     # 0: special token (not used)
     # 1 to vocab_size//3: keys
     # vocab_size//3+1 to 2*vocab_size//3: values
-    # 2*vocab_size//3+1 to vocab_size-1: filler/distractors
+    # 1 to vocab_size-1: filler (SAME range as keys + values — no easy "ignore" signal)
     key_vocab_start = 1
     key_vocab_end = vocab_size // 3
     value_vocab_start = vocab_size // 3 + 1
     value_vocab_end = 2 * vocab_size // 3
-    filler_vocab_start = 2 * vocab_size // 3 + 1
+    filler_vocab_start = 1
     filler_vocab_end = vocab_size - 1
     
     # Check we have enough space
