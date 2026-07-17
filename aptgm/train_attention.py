@@ -283,6 +283,7 @@ def main():
     for key in ['ssm_state_dim', 'n_heads', 'n_kv_heads', 'd_ff', 'dropout']:
         if key in config['model']:
             model_kwargs[key] = config['model'][key]
+    model_kwargs['max_seq_len'] = config["training"]["seq_len"]
 
     model = LMBackbone(**model_kwargs).to(device)
     

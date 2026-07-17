@@ -282,6 +282,7 @@ def main():
             "n_kv_heads": config["model"]["n_kv_heads"],
             "d_ff": config["model"]["d_ff"],
             "dropout": config["model"]["dropout"],
+            "max_seq_len": config["training"]["seq_len"],
         }
         
         if alpha is not None:

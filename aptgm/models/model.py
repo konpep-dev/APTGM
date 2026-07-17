@@ -11,22 +11,25 @@ from .block import APTGMBlock
 
 
 class LMBackbone(nn.Module):
-    """Language model backbone (embedding + blocks + head)."""
+    """Language model backbone (embedding + position + blocks + head)."""
     
     def __init__(
         self,
         vocab_size: int,
         d_model: int,
         n_layers: int,
-        block_type: str = "ssm",  # "ssm", "attention", "aptgm", "falcon_h1", "hard_routing"
+        max_seq_len: int = 512,
+        block_type: str = "ssm",
         **block_kwargs,
     ):
         super().__init__()
         self.d_model = d_model
         self.n_layers = n_layers
         self.block_type = block_type
+        self.max_seq_len = max_seq_len
         
         self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_embed = nn.Embedding(max_seq_len, d_model)
         
         # Build blocks based on type
         self.blocks = nn.ModuleList()
@@ -56,6 +59,7 @@ class LMBackbone(nn.Module):
     def _init_weights(self):
         """Initialize weights."""
         nn.init.normal_(self.embedding.weight, std=0.02)
+        nn.init.normal_(self.pos_embed.weight, std=0.02)
     
     def forward(self, input_ids: torch.Tensor) -> tuple[torch.Tensor, dict]:
         """
@@ -67,6 +71,9 @@ class LMBackbone(nn.Module):
             aux_info: dict with auxiliary information (e.g., gate values, router usage)
         """
         x = self.embedding(input_ids)
+        seq_len = x.size(1)
+        positions = torch.arange(seq_len, dtype=torch.long, device=x.device)
+        x = x + self.pos_embed(positions)
         
         aux_info = {"gate_values": [], "router_usage": []}
         
