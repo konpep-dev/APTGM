@@ -1,5 +1,5 @@
 data:
-  num_kv_pairs: 12
+  num_kv_pairs: 48
   num_queries: 6
   vocab_size: 256
 model:

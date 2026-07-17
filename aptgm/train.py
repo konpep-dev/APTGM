@@ -121,7 +121,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
             avg_gate = np.mean(gate_means[-100:]) if gate_means else 0.0
             pbar.set_postfix({
                 'loss': f'{avg_loss:.4f}',
-                'acc': f'{avg_acc:.2%}',
+                'train_acc': f'{avg_acc:.2%}',
                 'lr': f'{scheduler.get_last_lr()[0]:.2e}',
             })
         
@@ -133,7 +133,7 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
             history["step"].append(step)
             pbar.set_postfix({
                 'loss': f"{eval_stats['loss']:.4f}",
-                'acc': f"{eval_stats['accuracy']:.2%}",
+                'eval_acc': f"{eval_stats['accuracy']:.2%}",
                 'lr': f'{scheduler.get_last_lr()[0]:.2e}',
             })
     
