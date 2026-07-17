@@ -1,6 +1,6 @@
 data:
   num_kv_pairs: 48
-  num_queries: 6
+  num_queries: 48
   vocab_size: 256
 model:
   d_ff: 1024

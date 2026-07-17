@@ -11,8 +11,8 @@ import torch.amp
 from tqdm import tqdm
 import numpy as np
 
-from data.mqar import generate_mqar_batch
-from models.model import LMBackbone
+from aptgm.data.mqar import generate_mqar_batch
+from aptgm.models.model import LMBackbone
 
 
 def get_linear_warmup_cosine_decay_scheduler(optimizer, warmup_steps, max_steps):

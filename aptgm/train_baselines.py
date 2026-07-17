@@ -14,8 +14,8 @@ import numpy as np
 import sys
 import argparse
 
-from models.model import LMBackbone
-from data.mqar import generate_mqar_batch
+from aptgm.models.model import LMBackbone
+from aptgm.data.mqar import generate_mqar_batch
 
 
 @torch.no_grad()

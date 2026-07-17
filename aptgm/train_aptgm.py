@@ -15,8 +15,8 @@ from pathlib import Path
 from tqdm import tqdm
 import numpy as np
 
-from models.model import LMBackbone
-from data.mqar import generate_mqar_batch
+from aptgm.models.model import LMBackbone
+from aptgm.data.mqar import generate_mqar_batch
 
 
 @torch.no_grad()
