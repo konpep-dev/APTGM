@@ -27,6 +27,30 @@ def cosine_schedule(step, max_steps, warmup_steps, max_lr, min_lr=0.0):
     return min_lr + 0.5 * (max_lr - min_lr) * (1 + np.cos(np.pi * progress))
 
 
+@torch.no_grad()
+def evaluate(model, config, device, num_batches=20):
+    """Evaluate on fresh MQAR data."""
+    model.eval()
+    accs = []
+    for _ in range(num_batches):
+        input_ids, labels = generate_mqar_batch(
+            batch_size=config["training"]["batch_size"],
+            seq_len=config["training"]["seq_len"],
+            vocab_size=config["data"]["vocab_size"],
+            num_kv_pairs=config["data"]["num_kv_pairs"],
+            num_queries=config["data"]["num_queries"],
+            seed=None, device=device,
+        )
+        logits, _ = model(input_ids)
+        mask = (labels != -100)
+        preds = logits.argmax(dim=-1)
+        correct = (preds[mask] == labels[mask]).float().sum()
+        total = mask.sum()
+        if total > 0:
+            accs.append((correct / total).item())
+    return sum(accs) / len(accs) if accs else 0.0
+
+
 def train_steps(model, config, device, max_steps, log_interval=10):
     """Train for specified number of steps and return history."""
     model.train()
@@ -67,12 +91,6 @@ def train_steps(model, config, device, max_steps, log_interval=10):
                 labels[mask].view(-1),
             )
         
-        # Compute accuracy
-        preds = logits.argmax(dim=-1)
-        correct = (preds[mask] == labels[mask]).float().sum()
-        total = mask.sum()
-        accuracy = correct / total if total > 0 else 0.0
-        
         # Backward with AMP
         optimizer.zero_grad()
         scaler.scale(loss).backward()
@@ -81,15 +99,16 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         scaler.step(optimizer)
         scaler.update()
         
-        # Log
+        # Log — eval accuracy on fresh data, not training batch
         if step % log_interval == 0:
+            eval_acc = evaluate(model, config, device, num_batches=20)
             history["loss"].append(loss.item())
-            history["accuracy"].append(accuracy.item())
+            history["accuracy"].append(eval_acc)
             history["step"].append(step)
             
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}",
-                "acc": f"{accuracy.item():.2%}",
+                "acc": f"{eval_acc:.2%}",
             })
     
     return history

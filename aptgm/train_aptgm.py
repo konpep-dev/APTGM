@@ -19,6 +19,30 @@ from models.model import LMBackbone
 from data.mqar import generate_mqar_batch
 
 
+@torch.no_grad()
+def evaluate(model, config, device, num_batches=20):
+    """Evaluate on fresh MQAR data."""
+    model.eval()
+    accs = []
+    for _ in range(num_batches):
+        input_ids, labels = generate_mqar_batch(
+            batch_size=config["training"]["batch_size"],
+            seq_len=config["training"]["seq_len"],
+            vocab_size=config["data"]["vocab_size"],
+            num_kv_pairs=config["data"]["num_kv_pairs"],
+            num_queries=config["data"]["num_queries"],
+            seed=None, device=device,
+        )
+        logits, _ = model(input_ids)
+        mask = (labels != -100)
+        preds = logits.argmax(dim=-1)
+        correct = (preds[mask] == labels[mask]).float().sum()
+        total = mask.sum()
+        if total > 0:
+            accs.append((correct / total).item())
+    return sum(accs) / len(accs) if accs else 0.0
+
+
 def train_steps(model, config, device, max_steps, log_interval=10):
     """Train APTGM and track gate statistics by token type."""
     model.train()
@@ -50,7 +74,8 @@ def train_steps(model, config, device, max_steps, log_interval=10):
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'))
     
     lambda_gate = config["training"]["lambda_gate"]
-    g_star_filler = config["training"].get("g_star_filler", 0.05)
+    g_star_filler = config["training"].get("g_star_filler", config["training"].get("g_star", 0.05))
+    g_star_query = config["training"].get("g_star_query", 0.9)
 
     pbar = tqdm(range(max_steps), desc="Training APTGM")
     for step in pbar:
@@ -87,9 +112,15 @@ def train_steps(model, config, device, max_steps, log_interval=10):
                 gate_all_layers = torch.stack(aux_info["gate_values"], dim=0)  # [n_layers, batch, seq_len]
                 gate_mean_across_layers = gate_all_layers.mean(dim=0)  # [batch, seq_len]
 
-                # Regularize ONLY filler tokens toward g_star_filler
-                g_filler = gate_mean_across_layers[filler_mask].mean() if filler_mask.any() else gate_mean_across_layers.mean()
-                loss_gate = lambda_gate * (g_filler - g_star_filler) ** 2
+                # Regularize filler tokens toward g_star_filler (low → SSM)
+                # and query tokens toward g_star_query (high → attention)
+                loss_gate = torch.tensor(0.0, device=device)
+                if filler_mask.any():
+                    g_filler = gate_mean_across_layers[filler_mask].mean()
+                    loss_gate = loss_gate + lambda_gate * (g_filler - g_star_filler) ** 2
+                if mask.any():
+                    g_query = gate_mean_across_layers[mask].mean()
+                    loss_gate = loss_gate + lambda_gate * (g_query - g_star_query) ** 2
 
                 gate_mean = gate_mean_across_layers.mean()
                 loss = loss_lm + loss_gate
@@ -124,10 +155,12 @@ def train_steps(model, config, device, max_steps, log_interval=10):
         scaler.step(optimizer)
         scaler.update()
         
-        # --- Save to history ---
+        # --- Save to history (eval accuracy on fresh data, not training) ---
         if step % log_interval == 0 or step == max_steps - 1:
+            # Evaluate on fresh data for real accuracy
+            eval_acc = evaluate(model, config, device, num_batches=20)
             history["loss"].append(loss.item())
-            history["accuracy"].append(accuracy)
+            history["accuracy"].append(eval_acc)
             history["gate_mean"].append(gate_mean.item() if isinstance(gate_mean, torch.Tensor) else gate_mean)
             history["gate_at_queries"].append(gate_at_queries)
             history["gate_at_filler"].append(gate_at_filler)
@@ -136,7 +169,7 @@ def train_steps(model, config, device, max_steps, log_interval=10):
             
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}",
-                "acc": f"{accuracy:.2%}",
+                "acc": f"{eval_acc:.2%}",
                 "g_q": f"{gate_at_queries:.3f}",
                 "g_f": f"{gate_at_filler:.3f}"
             })

@@ -20,7 +20,8 @@ training:
   
   # Gate loss
   lambda_gate: 1.0
-  g_star: 0.15
+  g_star_filler: 0.05
+  g_star_query: 0.9
 
 data:
   vocab_size: 256

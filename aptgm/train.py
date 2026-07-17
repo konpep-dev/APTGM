@@ -48,9 +48,8 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
     scaler = torch.amp.GradScaler('cuda', enabled=(device.type == 'cuda'), init_scale=2**10)
     
     losses = []
-    accuracies = []
     gate_means = []
-    history = {"loss": [], "accuracy": [], "step": [], "gate_at_queries": [], "gate_at_filler": []}
+    history = {"loss": [], "accuracy": [], "step": []}
 
     pbar = tqdm(range(config['training']['max_steps']), desc="Training")
     
@@ -98,43 +97,44 @@ def train_epoch(model, optimizer, scheduler, config, device, step_offset=0):
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         
-        # Step optimizer with scaler, only step scheduler if optimizer actually stepped
+        # Step optimizer with scaler
         old_scale = scaler.get_scale()
         scaler.step(optimizer)
         scaler.update()
         new_scale = scaler.get_scale()
-        if new_scale == old_scale:  # optimizer.step() was NOT skipped
+        
+        # Only step scheduler if optimizer step succeeded (no gradient overflow)
+        # When scale stays the same, optimizer.step() executed successfully
+        if new_scale == old_scale:
             scheduler.step()
         
-        # Metrics
-        acc = compute_accuracy(logits, target_ids)
+        # Track training loss (not accuracy — training accuracy is misleading)
         losses.append(loss_lm.item())
-        accuracies.append(acc)
         
         # Logging
         if step % config['training']['log_interval'] == 0:
             avg_loss = np.mean(losses[-100:]) if losses else 0.0
-            avg_acc = np.mean(accuracies[-100:]) if accuracies else 0.0
             avg_gate = np.mean(gate_means[-100:]) if gate_means else 0.0
-            
-            history["loss"].append(avg_loss)
-            history["accuracy"].append(avg_acc)
-            history["step"].append(step)
-            if aux_info.get('gate_at_queries') is not None:
-                history["gate_at_queries"].append(aux_info['gate_at_queries'])
-            if aux_info.get('gate_at_filler') is not None:
-                history["gate_at_filler"].append(aux_info['gate_at_filler'])
-            
             pbar.set_postfix({
                 'loss': f'{avg_loss:.4f}',
-                'acc': f'{avg_acc:.3f}',
-                'gate': f'{avg_gate:.3f}' if gate_means else 'N/A',
+                'lr': f'{scheduler.get_last_lr()[0]:.2e}',
+            })
+        
+        # Periodic EVALUATION on fresh data (this is the real metric)
+        if step % config['training']['eval_interval'] == 0:
+            eval_stats = evaluate(model, config, device, num_batches=20)
+            history["loss"].append(eval_stats['loss'])
+            history["accuracy"].append(eval_stats['accuracy'])
+            history["step"].append(step)
+            pbar.set_postfix({
+                'loss': f"{eval_stats['loss']:.4f}",
+                'acc': f"{eval_stats['accuracy']:.2%}",
                 'lr': f'{scheduler.get_last_lr()[0]:.2e}',
             })
     
     return {
         'loss': np.mean(losses),
-        'accuracy': np.mean(accuracies),
+        'accuracy': history['accuracy'][-1] if history['accuracy'] else 0.0,
         'gate_mean': np.mean(gate_means) if gate_means else None,
         'history': history,
     }

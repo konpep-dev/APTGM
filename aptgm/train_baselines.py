@@ -18,6 +18,30 @@ from models.model import LMBackbone
 from data.mqar import generate_mqar_batch
 
 
+@torch.no_grad()
+def evaluate(model, config, device, num_batches=20):
+    """Evaluate on fresh MQAR data."""
+    model.eval()
+    accs = []
+    for _ in range(num_batches):
+        input_ids, labels = generate_mqar_batch(
+            batch_size=config["training"]["batch_size"],
+            seq_len=config["training"]["seq_len"],
+            vocab_size=config["data"]["vocab_size"],
+            num_kv_pairs=config["data"]["num_kv_pairs"],
+            num_queries=config["data"]["num_queries"],
+            device=device,
+        )
+        logits, _ = model(input_ids)
+        mask = (labels != -100)
+        preds = logits.argmax(dim=-1)
+        correct = (preds[mask] == labels[mask]).float().sum()
+        total = mask.sum()
+        if total > 0:
+            accs.append((correct / total).item())
+    return sum(accs) / len(accs) if accs else 0.0
+
+
 def train_steps(model, config, device, max_steps, log_interval=10, model_name="model"):
     """Train model and return history."""
     model.train()
@@ -59,27 +83,22 @@ def train_steps(model, config, device, max_steps, log_interval=10, model_name="m
             labels[mask].view(-1),
         )
         
-        # Compute accuracy
-        preds = logits.argmax(dim=-1)
-        correct = (preds[mask] == labels[mask]).float().sum()
-        total = mask.sum()
-        accuracy = correct / total if total > 0 else 0.0
-        
         # Backward
         optimizer.zero_grad()
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         
-        # Log
+        # Log — eval accuracy on fresh data, not training batch
         if step % log_interval == 0:
+            eval_acc = evaluate(model, config, device, num_batches=20)
             history["loss"].append(loss.item())
-            history["accuracy"].append(accuracy.item())
+            history["accuracy"].append(eval_acc)
             history["step"].append(step)
             
             postfix = {
                 "loss": f"{loss.item():.4f}",
-                "acc": f"{accuracy.item():.2%}",
+                "acc": f"{eval_acc:.2%}",
             }
             
             # Log router usage for hard routing
