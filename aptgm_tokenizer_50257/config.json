@@ -1,0 +1,12 @@
+{
+  "vocab_size": 50257,
+  "pre_tokenizer": "byte_level",
+  "unk_token": "<|UNK|>",
+  "bos_token": "<|BOS|>",
+  "eos_token": "<|EOS|>",
+  "pad_token": "<|PAD|>",
+  "mask_token": "<|MASK|>",
+  "add_prefix_space": true,
+  "lowercase": false,
+  "additional_special_tokens": []
+}
